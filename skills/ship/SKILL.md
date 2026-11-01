@@ -18,9 +18,13 @@ Rules that never change:
 0. Run `ship backends`. If `forCwd` is `null`, this project has no backend yet: follow `setup.md` in this skill's folder (it looks at the repos, asks a few yes/no questions, writes the config and starts the built-in backend), then go on with step 1. Do not stop.
 
 1. Write the plan as JSON (format: `plan-format.md` in this skill's folder) to the scratchpad. Use the real repo names the backend knows. Keep tasks small enough to review: one repo each, explicit files, tests named in `checks`.
-2. Show the user the task list in a short table (label, repo, title, deps) and ask once: "Start P-?". Do not start without a yes.
-3. Run `ship register <plan.json>` (add `--staging-only` when the plan ends on staging). It prints the plan id and what is ready. Fix any validation error it prints and register again.
-4. Open the dashboard for the user. For a built-in backend (`"builtin": true` in `ship backends`) run `ship up`: it starts the backend if needed and prints the link. For another backend, run `ship ui` with `run_in_background: true` (skip it if http://127.0.0.1:4390 already answers, or if the backend has its own page). Tell the user the link.
+2. Decide where this plan ends. If the user already said ("merge it into dev", "only up to staging", "all the way to production", "into feat/x"), use that. If not, ask in the same message as the task list, with your suggestion first:
+   - "Where should this plan end? I suggest a new branch `feat/<short-name-from-the-title>` made from `<staging or work branch>`, so nothing else is touched until you merge it. Or: your staging branch only, or all the way to a production PR."
+   Map the answer: a branch (new or existing) -> set `target_branch` in the plan JSON (the backend creates a missing branch from the staging/work branch; the plan stops there: no staging test, no production PR). Staging only -> `--staging-only`. Production -> neither (only when the project has a production branch).
+   Branch names: lowercase, `feat/` + 2-4 words from the plan title joined by `-` (for example "Retry failed webhooks" -> `feat/retry-failed-webhooks`); check it does not exist yet with `git ls-remote --heads origin <name>`, else add `-2`.
+3. Show the user the task list in a short table (label, repo, title, deps) and where it ends, and ask once: "Start P-?". Do not start without a yes.
+4. Run `ship register <plan.json>` (add `--staging-only` when the plan ends on staging). It prints the plan id and what is ready. Fix any validation error it prints and register again.
+5. Open the dashboard for the user. For a built-in backend (`"builtin": true` in `ship backends`) run `ship up`: it starts the backend if needed and prints the link. For another backend, run `ship ui` with `run_in_background: true` (skip it if http://127.0.0.1:4390 already answers, or if the backend has its own page). Tell the user the link.
 
 The user never runs `ship` themselves: every command in this skill is yours. When they ask to take over a plan another session started ("take over P-07"), run `ship attach P-07`, then start the loop below.
 

@@ -15,13 +15,19 @@ const [cmd, ...args] = argv;
 interface Backend { builtin?: boolean; project?: any; url: string; api?: string; tokenPage?: string; tokenHeader?: string; about?: string }
 interface Config { backends: Record<string, Backend>; projects: Record<string, string> } // projects: folder prefix -> backend name
 const loadConfig = (): Config => { try { return JSON.parse(readFileSync(CONFIG, "utf8")); } catch { return { backends: {}, projects: {} }; } };
+// The backend for a folder: the longest project folder that holds it, both sides as real paths (macOS /tmp is /private/tmp).
+const real = (p: string) => { try { return realpathSync(resolve(p)); } catch { return resolve(p); } };
+function projectFor(cfg: Config, folder: string): string | null {
+  const here = real(folder);
+  return Object.entries(cfg.projects).map(([dir, n]) => [real(dir), n] as const).filter(([dir]) => here === dir || here.startsWith(dir + "/")).sort((a, b) => b[0].length - a[0].length)[0]?.[1] ?? null;
+}
 // A plan remembers its backend (ship register writes it), so later commands from any folder reach the same one.
 const planFile = (id: string) => join(HOME, "plans", `${id}.json`);
 function pickBackend(planId?: string): { name: string; b: Backend } {
   const cfg = loadConfig();
   let name = backendFlag ?? process.env.SHIP_BACKEND;
+  if (!name) name = projectFor(cfg, process.cwd()) ?? undefined; // this folder's project first: plan ids repeat across projects
   if (!name && planId && existsSync(planFile(planId))) name = JSON.parse(readFileSync(planFile(planId), "utf8")).backend;
-  if (!name) { const cwd = resolve(process.cwd()); name = Object.entries(cfg.projects).filter(([dir]) => cwd === dir || cwd.startsWith(dir + "/")).sort((a, b) => b[0].length - a[0].length)[0]?.[1]; }
   if (!name && Object.keys(cfg.backends).length === 1) name = Object.keys(cfg.backends)[0]; // one backend: it is the default
   if (!name) die(`no backend for ${process.cwd()}: add the folder under "projects" in ${CONFIG}, or pass --backend <name>`);
   const b = cfg.backends[name!] ?? die(`backend "${name}" is not in ${CONFIG}`);
@@ -139,7 +145,7 @@ async function setup(file?: string) {
   const testDb = td ? { where: td.where, ...(td.connect ? { connect: td.connect } : {}), ...(td.start ? { start: td.start } : {}), ...(td.note ? { note: td.note } : {}) } : undefined;
   const project = { name, port, dataDir: join(HOME, "data", name), mergeToStaging: a.mergeToStaging, repos, ...(testDb ? { testDb } : {}) };
   mkdirSync(project.dataDir, { recursive: true });
-  cfg.backends[name] = { url: `http://127.0.0.1:${port}`, builtin: true, project }; cfg.projects[folder] = name;
+  cfg.backends[name] = { url: `http://127.0.0.1:${port}`, builtin: true, project }; cfg.projects[real(folder)] = name;
   saveConfig(cfg);
   out(`Backend ${name} is set up for ${folder}: http://127.0.0.1:${port}`);
 }
@@ -171,7 +177,7 @@ async function main() {
   }
   if (cmd === "backends") { // also says which backend this folder uses, so the skill can tell if setup is needed
     const cfg = loadConfig(), cwd = resolve(process.cwd());
-    const forCwd = Object.entries(cfg.projects).filter(([dir]) => cwd === dir || cwd.startsWith(dir + "/")).sort((a, b) => b[0].length - a[0].length)[0]?.[1] ?? null;
+    const forCwd = projectFor(cfg, cwd);
     return out({ ...cfg, forCwd, cwd });
   }
   if (cmd === "serve" && args[0]) backendFlag = args[0];

@@ -1,7 +1,7 @@
 // prflow Tasks page. Plain JS: polls GET {base}/state, renders, and sends the writes in DESIGN.md "HTTP".
 (function () {
   // Names a host can set (window.prflowHost.names); the defaults fit any project.
-  const NM = Object.assign({ release: "the release pipeline", git: "the git host", testUser: "the test user" }, (window.prflowHost && window.prflowHost.names) || {});
+  const NM = Object.assign({ release: "the release pipeline", git: "the git host", testUser: "the test user", staging: "", test: "" }, (window.prflowHost && window.prflowHost.names) || {});
   "use strict";
   const meta = (n, d) => document.querySelector('meta[name="' + n + '"]')?.content || d;
   const BASE = meta("prflow-base", "/api/prflow").replace(/\/$/, "");
@@ -223,11 +223,12 @@
     const repos = Math.max(p.repos.length, 1);
     if (p.targetBranch) { // a target plan ends at its merge: no staging deploy, UAT test or master PR
       out.push(["Merge into " + p.targetBranch, s.staging, plural(repos, "repo") + (repos > 1 ? ", in order" : "")]);
-      out.push(["Staging, UAT, master", p.landedAt ? "done" : "", "Targets " + p.targetBranch + ", not staging"]);
+      out.push(["Ends at " + p.targetBranch, p.landedAt ? "done" : "", "No staging test or production PR"]);
       return out;
     }
-    out.push(["Merge to staging", s.staging, plural(repos, "repo") + (repos > 1 ? ", in order" : "")]);
-    out.push(["Test on UAT", s.uat, p.uat && p.uat.tries > 1 ? "Try " + p.uat.tries : k === "list" ? "One check per bug" : k === "small" ? "Repeat the bug's steps" : "Real API calls"]);
+    const baseName = NM.staging || [...new Set((p.repos || []).map((r) => r.base))].join(", ") || "staging"; // the branch changes go into first
+    out.push(["Merge to " + baseName, s.staging, plural(repos, "repo") + (repos > 1 ? ", in order" : "")]);
+    out.push([NM.test || "Test on " + baseName, s.uat, p.uat && p.uat.tries > 1 ? "Try " + p.uat.tries : k === "list" ? "One check per bug" : k === "small" ? "Repeat the bug's steps" : "Real API calls"]);
     const merged = p.masterPrs.filter((r) => r.state === "merged").length;
     if (!p.stagingOnly) out.push([k === "small" ? "Master PR" : "Master PRs", s.master, s.master === "done" ? merged + "/" + p.masterPrs.length + " merged" : "You merge"]); // staging only: the strip ends at the UAT test
     return out;

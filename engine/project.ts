@@ -11,7 +11,7 @@ export interface ProjectConfig {
 const expand = (p: string) => (p === "~" ? homedir() : p.startsWith("~/") ? join(homedir(), p.slice(2)) : p);
 
 export function loadProject(name: string): ProjectConfig {
-  const file = join(homedir(), ".claude/ship/config.json");
+  const file = process.env.SHIP_CONFIG ?? join(homedir(), ".claude/ship/config.json"); // SHIP_CONFIG: another config file, for tests
   let raw: any;
   try { raw = JSON.parse(readFileSync(file, "utf8")); } catch (e) { throw new Error(`Cannot read ${file}: ${e instanceof Error ? e.message : String(e)}`); }
   const p = raw?.backends?.[name]?.project;

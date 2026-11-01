@@ -1,6 +1,6 @@
 // A Ports implementation for any git project: the git CLI for code, the GitHub CLI (gh) for PRs, `sh -c` for builds.
 // Terminal plans only: claude() and test() are never called. No deploy step, no release runner.
-import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Deliberate } from "./core/errors.ts";
 import type { Ports } from "./ports.ts";
@@ -199,6 +199,42 @@ export function gitPorts(project: ProjectConfig, opts: GitPortsOpts = {}): Ports
     return project.repos.find((x) => r.ok && real(r.out) === real(join(x.path, ".git")))?.name;
   };
 
+  // A remote that is not GitHub: "PRs" are local records; the merge is a plain git merge pushed to the branch.
+  type LocalPr = { id: number; repo: string; src: string; dest: string; state: "open" | "merged" | "declined" };
+  const LOCAL = `${project.dataDir}/local-prs.json`;
+  const local = (): LocalPr[] => { try { return JSON.parse(readFileSync(LOCAL, "utf8")); } catch { return []; } };
+  const saveLocal = (xs: LocalPr[]) => { mkdirSync(project.dataDir, { recursive: true }); writeFileSync(LOCAL, JSON.stringify(xs, null, 1)); };
+  const nextLocalId = () => Math.max(0, ...local().map((x) => x.id)) + 1;
+  const localPr = (repo: string, id: number) => local().find((x) => x.repo === repo && x.id === id);
+  const githubOf = new Map<string, boolean>();
+  async function onGithub(repo: string): Promise<boolean> {
+    if (!githubOf.has(repo)) githubOf.set(repo, /github\.com[:/]/.test((await g(["remote", "get-url", "origin"], path(repo))).out));
+    return githubOf.get(repo)!;
+  }
+  async function isMerged(lp: LocalPr): Promise<boolean> {
+    const dir = path(lp.repo);
+    await g(["fetch", "-q", "origin"], dir);
+    return (await g(["merge-base", "--is-ancestor", `origin/${lp.src}`, `origin/${lp.dest}`], dir)).ok;
+  }
+  async function mergeLocal(lp: LocalPr): Promise<string> {
+    const dir = path(lp.repo);
+    if (project.mergeToStaging !== "auto") { // "you": wait until the user merged the branch on their git host
+      while (!(await isMerged(lp))) { if (localPr(lp.repo, lp.id)?.state === "declined") throw new Deliberate("the merge was cancelled"); await sleep(30_000); }
+    } else if (!(await isMerged(lp))) {
+      const tmp = `${project.dataDir}/merge-tmp/${lp.repo}-${lp.id}`;
+      rmSync(tmp, { recursive: true, force: true }); await g(["worktree", "prune"], dir);
+      await must(["worktree", "add", "-q", "--detach", tmp, `origin/${lp.dest}`], dir);
+      try {
+        const m = await g(["merge", "--no-ff", "-m", `Merge ${lp.src} into ${lp.dest}`, `origin/${lp.src}`], tmp);
+        if (!m.ok) { await g(["merge", "--abort"], tmp); throw new Deliberate(`Merging ${lp.src} into ${lp.dest} conflicts: ${(m.err || m.out).split("\n").slice(-2).join(" ")}`); }
+        await must(["push", "-q", "origin", `HEAD:${lp.dest}`], tmp);
+      } finally { await g(["worktree", "remove", "--force", tmp], dir); }
+    }
+    saveLocal(local().map((x) => (x.repo === lp.repo && x.id === lp.id ? { ...x, state: "merged" as const } : x)));
+    await g(["fetch", "-q", "origin"], dir);
+    return (await g(["rev-parse", `origin/${lp.dest}`], dir)).out;
+  }
+
   return {
     claude: async () => { throw new Error("This backend runs no Claude steps: the terminal does them."); },
     repos: () => project.repos.map((r) => ({ name: r.name })),
@@ -217,6 +253,7 @@ export function gitPorts(project: ProjectConfig, opts: GitPortsOpts = {}): Ports
     },
     prs: {
       async create(repo, src, dest, title, body) {
+        if (!(await onGithub(repo))) { const pr = { id: nextLocalId(), repo, src, dest, state: "open" as const }; saveLocal([...local(), pr]); return { id: pr.id, url: "" }; } // no GitHub: a local record, merged with git
         const r = await gh(["gh", "pr", "create", "--base", dest, "--head", src, "--title", title, "--body", body], path(repo), 2 * 60_000);
         const url = r.ok ? r.out.split("\n").filter((l) => /\/pull\/\d+/.test(l)).pop()?.trim() : undefined;
         if (url) return { id: Number(/\/pull\/(\d+)/.exec(url)![1]), url };
@@ -227,6 +264,8 @@ export function gitPorts(project: ProjectConfig, opts: GitPortsOpts = {}): Ports
         throw new Error(`gh pr create: ${(r.err || r.out).split("\n").slice(-3).join(" ")}`);
       },
       async merge(repo, id) {
+        const lp = localPr(repo, id);
+        if (lp) return mergeLocal(lp);
         if (project.mergeToStaging === "auto") await ghMust(repo, ["pr", "merge", String(id), "--merge"]);
         else for (;;) { // "you": merge it on the git host; poll until it is merged or closed
           const v = await view(repo, id, "state");
@@ -238,13 +277,15 @@ export function gitPorts(project: ProjectConfig, opts: GitPortsOpts = {}): Ports
         return String(v.mergeCommit?.oid ?? "");
       },
       async state(repo, id) {
+        const lp = localPr(repo, id);
+        if (lp) return lp.state === "declined" ? "declined" : (await isMerged(lp)) ? "merged" : "open";
         const s = String((await view(repo, id, "state")).state).toUpperCase();
         return s === "MERGED" ? "merged" : s === "OPEN" ? "open" : "declined";
       },
-      head: async (repo, id) => String((await view(repo, id, "headRefOid")).headRefOid ?? ""),
-      decline: async (repo, id) => { await ghMust(repo, ["pr", "close", String(id)]); },
-      retitle: async (repo, id, title) => { await ghMust(repo, ["pr", "edit", String(id), "--title", title]); },
-      describe: async (repo, id, title, description) => { await ghMust(repo, ["pr", "edit", String(id), "--title", title, "--body", description]); },
+      head: async (repo, id) => { const lp = localPr(repo, id); if (lp) { await g(["fetch", "-q", "origin"], path(repo)); return (await g(["rev-parse", `origin/${lp.src}`], path(repo))).out; } return String((await view(repo, id, "headRefOid")).headRefOid ?? ""); },
+      decline: async (repo, id) => { const lp = localPr(repo, id); if (lp) { saveLocal(local().map((x) => (x === lp || (x.repo === repo && x.id === id) ? { ...x, state: "declined" as const } : x))); return; } await ghMust(repo, ["pr", "close", String(id)]); },
+      retitle: async (repo, id, title) => { if (localPr(repo, id)) return; await ghMust(repo, ["pr", "edit", String(id), "--title", title]); },
+      describe: async (repo, id, title, description) => { if (localPr(repo, id)) return; await ghMust(repo, ["pr", "edit", String(id), "--title", title, "--body", description]); },
     },
     deploy: {
       check: async () => ({ manual: "no deploy step" }),
