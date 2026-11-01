@@ -8,7 +8,7 @@ import type { ProjectConfig } from "./project.ts";
 
 export type Out = { ok: boolean; out: string; err: string };
 export type Runner = (cmd: string[], cwd: string, timeoutMs?: number) => Promise<Out>;
-export interface GitPortsOpts { gh?: Runner; sleep?: (ms: number) => Promise<void> } // tests stub gh and the poll wait
+export interface GitPortsOpts { gh?: Runner; sleep?: (ms: number) => Promise<void>; github?: boolean } // tests stub gh and the poll wait; github: force the GitHub path
 
 export const run: Runner = async (cmd, cwd, timeoutMs = 5 * 60_000) => {
   const p = Bun.spawn(cmd, { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GH_PROMPT_DISABLED: "1" } });
@@ -208,6 +208,7 @@ export function gitPorts(project: ProjectConfig, opts: GitPortsOpts = {}): Ports
   const localPr = (repo: string, id: number) => local().find((x) => x.repo === repo && x.id === id);
   const githubOf = new Map<string, boolean>();
   async function onGithub(repo: string): Promise<boolean> {
+    if (opts.github !== undefined) return opts.github;
     if (!githubOf.has(repo)) githubOf.set(repo, /github\.com[:/]/.test((await g(["remote", "get-url", "origin"], path(repo))).out));
     return githubOf.get(repo)!;
   }

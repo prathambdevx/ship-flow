@@ -39,10 +39,23 @@ async function world(name: string, over: Partial<ProjectConfig["repos"][0]> = {}
     return { ok: false, out: "", err: "unknown pr call" };
   };
   const project: ProjectConfig = { name: name, port: 0, dataDir: join(dir, "data"), mergeToStaging, repos: [{ name: "app", path: repo, workBranch: "main", stagingBranch: null, prodBranch: null, build: "echo built", test: "test -f README.md", ...over }] };
-  return { dir, origin, repo, project, prs, calls, gh, ports: gitPorts(project, { gh, sleep: async () => {} }) };
+  return { dir, origin, repo, project, prs, calls, gh, ports: gitPorts(project, { gh, sleep: async () => {}, github: true }) };
 }
 
 describe("git ports", () => {
+  test("a remote that is not GitHub: the merge is a plain git merge pushed to the branch, no gh call", async () => {
+    const w = await world("plain");
+    const ports = gitPorts(w.project, { gh: w.gh, sleep: async () => {} }); // no github flag: the temp origin is not GitHub
+    await sh(w.repo, "checkout", "-q", "-b", "feat/x"); writeFileSync(join(w.repo, "x.txt"), "x\n");
+    await sh(w.repo, "add", "-A"); await sh(w.repo, "commit", "-q", "-m", "x"); await sh(w.repo, "push", "-q", "origin", "feat/x");
+    const pr = await ports.prs.create("app", "feat/x", "main", "t", "b");
+    expect(pr.url).toBe("");
+    expect(await ports.prs.state("app", pr.id)).toBe("open");
+    const merge = await ports.prs.merge("app", pr.id);
+    expect(merge).toMatch(/^[0-9a-f]{40}$/);
+    expect(await ports.prs.state("app", pr.id)).toBe("merged");
+    expect(w.calls.length).toBe(0);
+  });
   test("worktree, commit, merge into the plan branch, build", async () => {
     const w = await world("basic");
     const { git } = w.ports, plan = join(w.dir, "stage/P-01/app"), task = join(w.dir, "stage/P-01/T1");
@@ -98,7 +111,7 @@ describe("git ports", () => {
     const y = await world("prs-you", {}, "you");
     await y.ports.prs.create("app", "x", "main", "t", "b");
     let polls = 0;
-    const slow = gitPorts(y.project, { gh: async (c) => { if (c[2] === "view" && ++polls === 3) Object.assign(y.prs.get(1)!, { state: "MERGED", merge: "deadbeef" }); return y.gh(c, ""); }, sleep: async () => {} });
+    const slow = gitPorts(y.project, { github: true, gh: async (c) => { if (c[2] === "view" && ++polls === 3) Object.assign(y.prs.get(1)!, { state: "MERGED", merge: "deadbeef" }); return y.gh(c, ""); }, sleep: async () => {} });
     expect(await slow.prs.merge("app", 1)).toBe("deadbeef");
     y.prs.set(2, { src: "q", dest: "main", state: "CLOSED" });
     await expect(slow.prs.merge("app", 2)).rejects.toThrow("the PR was closed");
