@@ -1,0 +1,143 @@
+#!/usr/bin/env bun
+// ship: the terminal's side of a /ship plan. It talks to the project's backend (the fixed steps: worktrees, merges, deploys,
+// tests, PRs) over HTTP; the backend is picked per project from ~/.claude/ship/config.json. It never pushes or merges itself.
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
+
+const HOME = join(homedir(), ".claude", "ship");
+const CONFIG = join(HOME, "config.json");
+const argv = process.argv.slice(2), flag = (n: string) => { const i = argv.indexOf(n); if (i < 0) return undefined; const v = argv[i + 1]; argv.splice(i, 2); return v; };
+const backendFlag = flag("--backend");
+const [cmd, ...args] = argv;
+
+interface Backend { url: string; api?: string; tokenPage?: string; tokenHeader?: string; about?: string }
+interface Config { backends: Record<string, Backend>; projects: Record<string, string> } // projects: folder prefix -> backend name
+const loadConfig = (): Config => { try { return JSON.parse(readFileSync(CONFIG, "utf8")); } catch { return { backends: {}, projects: {} }; } };
+// A plan remembers its backend (ship register writes it), so later commands from any folder reach the same one.
+const planFile = (id: string) => join(HOME, "plans", `${id}.json`);
+function pickBackend(planId?: string): { name: string; b: Backend } {
+  const cfg = loadConfig();
+  let name = backendFlag ?? process.env.SHIP_BACKEND;
+  if (!name && planId && existsSync(planFile(planId))) name = JSON.parse(readFileSync(planFile(planId), "utf8")).backend;
+  if (!name) { const cwd = resolve(process.cwd()); name = Object.entries(cfg.projects).filter(([dir]) => cwd === dir || cwd.startsWith(dir + "/")).sort((a, b) => b[0].length - a[0].length)[0]?.[1]; }
+  if (!name) die(`no backend for ${process.cwd()}: add the folder under "projects" in ${CONFIG}, or pass --backend <name>`);
+  const b = cfg.backends[name!] ?? die(`backend "${name}" is not in ${CONFIG}`);
+  return { name: name!, b: b as Backend };
+}
+let BK: { name: string; b: Backend };
+const URL_ = () => BK.b.url.replace(/\/$/, ""), API = () => `${URL_()}${BK.b.api ?? "/api/prflow"}`;
+const die = (msg: string): never => { console.error(`ship: ${msg}`); process.exit(1); };
+const out = (x: unknown) => console.log(typeof x === "string" ? x : JSON.stringify(x, null, 2));
+const readJson = (path?: string) => {
+  if (!path) die("give a JSON file (or - for stdin)");
+  const text = path === "-" ? readFileSync(0, "utf8") : readFileSync(path!, "utf8");
+  try { return JSON.parse(text); } catch (e: any) { return die(`${path} is not valid JSON: ${e.message}`); }
+};
+
+// The write token the backend puts on its page (tokenPage); read fresh each call and never printed.
+let token = "";
+async function tok(): Promise<string> {
+  if (token || !BK.b.tokenPage) return token;
+  const html = await fetch(`${URL_()}${BK.b.tokenPage}`).then((r) => r.text()).catch(() => die(`backend ${BK.name} is not answering on ${URL_()}`));
+  token = /<meta name="td-token" content="([^"]+)"/.exec(html as string)?.[1] ?? die(`no page token on ${BK.b.tokenPage}`);
+  return token;
+}
+async function call(method: "GET" | "POST", path: string, body?: unknown): Promise<any> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (method === "POST" && BK.b.tokenPage) headers[BK.b.tokenHeader ?? "x-td-token"] = await tok();
+  const r = await fetch(`${API()}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }).catch((e) => die(`backend ${BK.name}: ${e.message}`));
+  const text = await (r as Response).text();
+  let j: any; try { j = JSON.parse(text); } catch { j = { ok: false, error: text.slice(0, 500) }; }
+  if (!(r as Response).ok || j?.ok === false) die(j?.error ?? `HTTP ${(r as Response).status}`);
+  return j;
+}
+const todo = (id: string) => call("GET", `/terminal/todo/${id}`);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const need = (v: string | undefined, what: string) => v ?? die(`missing ${what}`);
+
+function seenFile(id: string) { mkdirSync(join(HOME, "seen"), { recursive: true }); return join(HOME, "seen", `${BK.name}-${id}.json`); }
+
+async function main() {
+  BK = pickBackend(cmd === "register" ? undefined : args[0]);
+  switch (cmd) {
+    case "register": {
+      const plan = readJson(args[0]), sid = process.env.CLAUDE_CODE_SESSION_ID ?? die("CLAUDE_CODE_SESSION_ID is not set: run this from the Claude Code session that planned the work");
+      const textFile = args.indexOf("--text"), text = textFile >= 0 ? readFileSync(need(args[textFile + 1], "--text file"), "utf8") : undefined;
+      const r = await call("POST", "/terminal/adopt", { plan, session: sid, cwd: process.cwd(), text, stagingOnly: args.includes("--staging-only") });
+      mkdirSync(join(HOME, "sessions"), { recursive: true }); mkdirSync(join(HOME, "plans"), { recursive: true });
+      writeFileSync(join(HOME, "sessions", sid), JSON.stringify({ plan: r.id, backend: BK.name, hook: `${API()}/terminal/hook` })); // the hook posts only for a session with this file
+      writeFileSync(planFile(r.id), JSON.stringify({ backend: BK.name, session: sid, cwd: process.cwd(), at: Date.now() }));
+      writeFileSync(seenFile(r.id), "[]");
+      out(`Registered ${r.id} on backend ${BK.name} (${URL_()}). Its page now shows it.`);
+      return out(await todo(r.id));
+    }
+    case "attach": {
+      // Takes over an existing plan from this session (e.g. one the old engine started).
+      const id = need(args[0], "plan id"), sid = process.env.CLAUDE_CODE_SESSION_ID ?? die("CLAUDE_CODE_SESSION_ID is not set");
+      await call("POST", `/terminal/${id}/attach`, { session: sid, cwd: process.cwd() });
+      mkdirSync(join(HOME, "sessions"), { recursive: true }); mkdirSync(join(HOME, "plans"), { recursive: true });
+      writeFileSync(join(HOME, "sessions", sid), JSON.stringify({ plan: id, backend: BK.name, hook: `${API()}/terminal/hook` }));
+      writeFileSync(planFile(id), JSON.stringify({ backend: BK.name, session: sid, cwd: process.cwd(), at: Date.now() }));
+      writeFileSync(seenFile(id), "[]");
+      out(`${id} is now run from this session.`);
+      return out(await todo(id));
+    }
+    case "status": return out(await todo(need(args[0], "plan id")));
+    case "wait": {
+      // Blocks until something new needs the terminal (a ready task, an error, the staging test, master PRs, the end), then prints it.
+      const id = need(args[0], "plan id"), until = Date.now() + Number(args[1] ?? 3600) * 1000;
+      const f = seenFile(id), seen = new Set<string>(existsSync(f) ? JSON.parse(readFileSync(f, "utf8")) : []);
+      for (;;) {
+        const t = await todo(id), fresh = t.items.filter((i: any) => !seen.has(i.key));
+        if (fresh.length) {
+          for (const i of fresh) seen.add(i.key);
+          writeFileSync(f, JSON.stringify([...seen]));
+          return out({ plan: t.plan, now: t.now, steps: t.steps, new: fresh, open: t.items.length - fresh.length, tasks: t.tasks });
+        }
+        if (Date.now() > until) return out({ plan: t.plan, now: t.now, steps: t.steps, new: [], note: "Nothing new yet; run ship wait again." });
+        await sleep(8000);
+      }
+    }
+    case "done": {
+      // Hands a signed-off task to the engine, then waits for its merge into the plan branch.
+      const [id, label, ...did] = args;
+      await call("POST", `/terminal/${need(id, "plan id")}/done`, { task: need(label, "task label"), did: did.join(" ") });
+      for (let i = 0; i < 90; i++) {
+        await sleep(2000);
+        const t = (await todo(id!)).tasks.find((x: any) => x.label === label);
+        if (t?.status === "done") return out(`${label} merged into the plan branch.`);
+        if (t?.status === "failed") return die(`${label} failed to merge: ${t.sub}`);
+      }
+      return out(`${label}: the merge is still running; check ship status ${id}.`);
+    }
+    case "round": return out(await call("POST", `/terminal/${need(args[0], "plan id")}/round`, { task: need(args[1], "task label"), ...readJson(args[2]) }));
+    case "replan": return out(await call("POST", `/terminal/${need(args[0], "plan id")}/replan`, readJson(args[1])));
+    case "note": return out(await call("POST", `/terminal/${need(args[0], "plan id")}/note`, { text: args.slice(1).join(" ") }));
+    case "uat-guide": return out(await call("GET", "/terminal/uat-guide"));
+    case "query": return out(await call("POST", "/terminal/query", { database: need(args[0], "database"), sql: need(args[1], "sql") }));
+    case "uat-run": return out(await call("POST", `/terminal/${need(args[0], "plan id")}/uat-run`, { plan: readJson(args[1]) }));
+    case "uat-recheck": return out(await call("POST", `/terminal/${need(args[0], "plan id")}/uat-recheck`, { checks: readJson(args[1]), waitMs: Number(args[2] ?? 20000) }));
+    case "port-done": return out(await call("POST", `/terminal/${need(args[0], "plan id")}/port-answer`, { ok: !args.includes("--fail"), note: args.slice(1).filter((a) => a !== "--fail").join(" ") }));
+    case "sweep-answer": return out(await call("POST", `/terminal/${need(args[0], "plan id")}/sweep-answer`, readJson(args[1])));
+    case "uat-answer": return out(await call("POST", `/terminal/${need(args[0], "plan id")}/uat-answer`, readJson(args[1])));
+    case "retry": return out(await call("POST", `/plans/${need(args[0], "plan id")}/retry`, {}));
+    case "stop": return out(await call("POST", `/plans/${need(args[0], "plan id")}/stop`, {}));
+    case "backends": return out(loadConfig());
+    default:
+      out(`ship <command>   (backend: --backend <name>, else the project folder in ~/.claude/ship/config.json)
+  register <plan.json> [--staging-only] [--text plan.md]   register and start a plan from this session
+  attach <P-xx>                    take over an existing plan from this session
+  status <P-xx>                    what the plan and each task are doing
+  wait <P-xx> [seconds]            block until something new needs this terminal (run in the background)
+  done <P-xx> <T1> <what it did>   task signed off: merge it into the plan branch
+  round <P-xx> <T1> <round.json>   record a review round (blocking, minor, reviewer)
+  replan <P-xx> <patch.json>       change only the tasks named (update, redo, reopen, add, remove)
+  note <P-xx> <text>               a line for the Tasks page
+  uat-guide | query <db> <sql> | uat-run <P-xx> <plan.json> | uat-recheck <P-xx> <checks.json> [ms] | uat-answer <P-xx> <answer.json>
+  sweep-answer <P-xx> <answer.json>  the last review's level for each minor finding
+  port-done <P-xx> [--fail] [note]  a master conflict resolved (files staged, not committed), or --fail with why
+  retry <P-xx> | stop <P-xx> | backends`);
+  }
+}
+await main();

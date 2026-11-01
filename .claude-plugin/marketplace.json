@@ -1,0 +1,7 @@
+{
+  "name": "ship-flow",
+  "owner": { "name": "Pratham Bhatia" },
+  "plugins": [
+    { "name": "ship-flow", "source": "./", "description": "Run a planned change from the planning session with subagents; the backend's page shows it live." }
+  ]
+}
