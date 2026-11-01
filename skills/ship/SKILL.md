@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Use when the user types /ship or says "ship it", "start the plan", "run this plan with subagents" after planning a change in this session. Turns the plan agreed in this conversation into tasks, registers it with the project's backend, and runs it to the end from this session with subagents: Sonnet executors and reviewers per task, a fresh Opus sign-off, Opus security where needed, a debugger for a failed build, a tester for staging. This session stays the master and fixes anything that gets stuck.
+description: Use when the user types /ship or says "ship this plan", "ship it", "ship this", "start the plan", "run the plan", "execute this plan", "build this plan with subagents" after planning a change in this session, or asks to take over or continue a plan (P-07). Turns the plan agreed in this conversation into tasks, registers it with the project's backend, and runs it to the end from this session with subagents: Sonnet executors and reviewers per task, a fresh Opus sign-off, Opus security where needed, a debugger for a failed build, a tester for staging. This session stays the master and fixes anything that gets stuck.
 ---
 
 # /ship: run the plan from this session
@@ -14,6 +14,8 @@ Rules that never change:
 - Run `ship` from this session's folder, or pass `--backend <name>`.
 
 ## 1. Register
+
+0. Run `ship backends`. If it lists no backend, stop and tell the user in plain words: ship-flow needs a backend (a small local service that makes worktrees, merges, deploys and opens PRs for their project); none is set up, so nothing can run yet. Point them to `BACKEND.md` in the plugin folder and offer `ship demo` to see the dashboard. Do not register.
 
 1. Write the plan as JSON (format: `plan-format.md` in this skill's folder) to the scratchpad. Use the real repo names the backend knows. Keep tasks small enough to review: one repo each, explicit files, tests named in `checks`.
 2. Show the user the task list in a short table (label, repo, title, deps) and ask once: "Start P-?". Do not start without a yes.
