@@ -1,6 +1,6 @@
 {
   "name": "ship-flow",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Run a planned change from the Claude Code session that planned it: Sonnet executors and reviewers, a fresh Opus sign-off, and a project backend for worktrees, staging, the staging test and master PRs. The backend's page shows the session live.",
   "author": { "name": "Pratham Bhatia" }
 }

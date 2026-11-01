@@ -1,38 +1,61 @@
 # ship-flow
 
-Run a planned change from the Claude Code session that planned it. That session becomes the **master**: it starts subagents for each task (a Sonnet executor, a Sonnet reviewer it keeps for every round, a fresh Opus sign-off, an Opus security reviewer when needed), a debugger for a failed build and a tester for staging, and fixes anything that gets stuck. A project **backend** does the fixed steps: worktrees, merges, builds, staging, deploys, the staging test's calls and master PRs. The backend's page shows the master and every subagent live.
+Plan a change with Claude Code, then type `/ship`. The same session runs the whole plan with **subagents**: a Sonnet executor writes each task, a Sonnet reviewer checks it round after round, a fresh Opus reviewer signs it off, and a tester checks it on staging. Your planning session is the **master**: it already knows the plan, so when something gets stuck it fixes it. No new sessions, no watchdog.
 
-## Use
+A web page shows the master and every subagent live, with each plan's waves, tasks, findings and PRs.
 
-1. Plan the change with Claude in a terminal, as usual.
-2. Type `/ship`. Claude writes the task list, shows it, and asks "Start P-?".
-3. Say yes. Watch the subagents at the bottom of the terminal, and the backend's page.
-4. When it says the master PRs are ready, merge from the page.
+![The ship-flow dashboard: a plan's waves, the master session and its running subagents, and the task board](docs/dashboard.png)
 
-Keep the Mac awake with the lid closed for long plans. To take over a plan from another session: `ship attach P-07`.
+## Install (one line)
 
-## Parts
+```bash
+curl -fsSL https://raw.githubusercontent.com/prathambhatia/ship-flow/main/install.sh | bash
+```
+
+It needs [Claude Code](https://claude.com/claude-code), [Bun](https://bun.sh), git and jq. It clones ship-flow to `~/.ship-flow`, puts the `ship` command in `~/.local/bin`, and installs the Claude Code plugin. Run it again to update.
+
+## Try the page
+
+```bash
+ship demo
+```
+
+This opens the dashboard with made-up plans, so you can look around before you set anything up. Light mode is the default; the moon button switches to dark.
+
+## Use it
+
+1. Plan a change with Claude Code in your project, as you normally would.
+2. Type `/ship`. Claude turns the plan into tasks, shows you the list and asks to start.
+3. Say yes. The subagents appear at the bottom of your terminal.
+4. Run `ship ui` in another terminal to watch it in the browser (http://127.0.0.1:4390).
+5. When the master PRs are ready, merge them from the page.
+
+To continue a plan from another session: `ship attach P-07`.
+
+## You need a backend
+
+ship-flow does the Claude part: planning, writing, reviewing, testing. The fixed steps (worktrees, merges, builds, staging deploys, PRs) belong to your project, so they live in a **backend**: a small local HTTP service. `BACKEND.md` lists the calls it answers. Point ship-flow at it in `~/.claude/ship/config.json`:
+
+```json
+{
+  "backends": { "myproject": { "url": "http://127.0.0.1:4323" } },
+  "projects": { "/Users/you/code/myproject": "myproject" }
+}
+```
+
+With one backend, every project uses it.
+
+## What is inside
 
 | Path | What |
 |---|---|
-| `skills/ship/SKILL.md` | The master's loop: register, start tasks, review rounds, sign-off, re-plan patches, last review, staging test |
-| `skills/ship/plan-format.md` | The plan JSON `ship register` takes |
-| `agents/*.md` | executor, reviewer, signoff, security, debugger, tester |
-| `bin/ship` | The CLI the master and subagents call; talks only to the backend |
-| `hooks/` | Sends each tool call and subagent start or stop to the backend, only for a session that owns a plan |
-| `BACKEND.md` | The HTTP contract a project's backend implements, and the per-project config |
+| `skills/ship/` | The `/ship` skill: the master's loop, and the plan format |
+| `agents/` | executor, reviewer, signoff, security, debugger, tester |
+| `bin/ship` | The CLI the master and subagents use; `ship help` lists every command |
+| `hooks/` | Send each tool call and subagent start or stop to the page |
+| `ui/` | The dashboard (plain HTML, CSS and JS, no build) |
+| `install.sh` | The one-line installer |
 
-## Install
+## Safety
 
-```bash
-ln -sf ~/Desktop/Repos/ship-flow/bin/ship ~/.local/bin/ship
-claude plugin marketplace add ~/Desktop/Repos/ship-flow
-claude plugin install ship-flow@ship-flow
-```
-
-Then add your project's backend to `~/.claude/ship/config.json` (see `BACKEND.md`). After editing the plugin here, run `claude plugin marketplace update ship-flow && claude plugin update ship-flow@ship-flow`.
-
-## Where the data is
-
-- The plan, its tasks, rounds and findings: in the backend (wherever the backend stores its state).
-- On this Mac, `~/.claude/ship/`: `config.json` (backends), `sessions/<id>` (which session owns which plan, read by the hook), `plans/<P-xx>.json` (each plan's backend), `seen/` (what `ship wait` already printed).
+Subagents never push or merge. Only the backend does, and merging to production waits for your click on the page.
