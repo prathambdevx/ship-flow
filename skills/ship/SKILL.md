@@ -18,6 +18,9 @@ Rules that never change:
 1. Write the plan as JSON (format: `plan-format.md` in this skill's folder) to the scratchpad. Use the real repo names the backend knows. Keep tasks small enough to review: one repo each, explicit files, tests named in `checks`.
 2. Show the user the task list in a short table (label, repo, title, deps) and ask once: "Start P-?". Do not start without a yes.
 3. Run `ship register <plan.json>` (add `--staging-only` when the plan ends on staging). It prints the plan id and what is ready. Fix any validation error it prints and register again.
+4. Open the dashboard for the user: run `ship ui` with `run_in_background: true` (skip it if http://127.0.0.1:4390 already answers, or if the backend has its own page). Tell the user the link.
+
+The user never runs `ship` themselves: every command in this skill is yours. When they ask to take over a plan another session started ("take over P-07"), run `ship attach P-07`, then start the loop below.
 
 ## 2. The loop
 

@@ -24,13 +24,13 @@ This opens the dashboard with made-up plans, so you can look around before you s
 
 ## Use it
 
+`/ship` is the only command you need. After that, you just talk to the session.
+
 1. Plan a change with Claude Code in your project, as you normally would.
 2. Type `/ship`. Claude turns the plan into tasks, shows you the list and asks to start.
-3. Say yes. The subagents appear at the bottom of your terminal.
-4. Run `ship ui` in another terminal to watch it in the browser (http://127.0.0.1:4390).
+3. Say yes. That session is now the **master**: its subagents appear at the bottom of your terminal, and it opens the dashboard in your browser.
+4. Ask it anything in plain words: "why is T3 stuck?", "how far along is it?", "take over P-07".
 5. When the master PRs are ready, merge them from the page.
-
-To continue a plan from another session: `ship attach P-07`.
 
 ## Changing the plan
 
