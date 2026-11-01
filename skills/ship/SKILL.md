@@ -52,7 +52,7 @@ Stops: after 5 rounds with blocking findings, or the same finding twice, stop th
 
 ### Changing the plan
 
-When a finding has `fix_in: "plan"`, a task needs another repo's file, or a staging test shows the plan is wrong, change only what is needed:
+When the user asks for a change in plain words (they never write a patch), when a finding has `fix_in: "plan"`, when a task needs another repo's file, or when a staging test shows the plan is wrong: work out which tasks it touches and change only those:
 1. Write a patch file with only the tasks that change: `{"why":"...","tasks":[{"label":"T4","action":"update","what":[...],"files":[...]},{"label":"T9","action":"add",...full task...}]}`. Actions: `update` (a running or waiting task gets a note), `redo` (start the task again), `reopen` (a done task changes again), `add`, `remove`.
 2. Run `ship replan <P-xx> <patch.json>`. Every task not named keeps going. Continue the affected executors with SendMessage and the change.
 

@@ -32,6 +32,10 @@ This opens the dashboard with made-up plans, so you can look around before you s
 
 To continue a plan from another session: `ship attach P-07`.
 
+## Changing the plan
+
+Tell the master session in plain words, for example "T4 should also handle refunds" or "drop the retry button". It works out which tasks change, updates only those, and passes the change to the subagents working on them. Every other task keeps going. You never write a patch or run a command for this.
+
 ## You need a backend
 
 ship-flow does the Claude part: planning, writing, reviewing, testing. The fixed steps (worktrees, merges, builds, staging deploys, PRs) belong to your project, so they live in a **backend**: a small local HTTP service. `BACKEND.md` lists the calls it answers. Point ship-flow at it in `~/.claude/ship/config.json`:

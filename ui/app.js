@@ -91,8 +91,7 @@
     const what = !cur ? (p.release?.state === "running" ? "release run #" + p.release.run : "") : cur.run === "tag" ? "waiting for the " + cur.repo + " release" : cur.run === "failed" ? cur.repo + " failed" : (cur.run === "deploying" ? "deploying " : "merging ") + cur.repo;
     return [m + "/" + prs.length + " merged", what, cur?.run === "deploying" ? cur.id : undefined];
   }
-  const wdOn = () => false; // no watchdog: plans run from a terminal session (/ship, ADR-0017)
-  const forYouKind = (p) => (wdOn(p) ? "watchdog" : p.error ? "error" : p.steps.plan === "you" ? "start" : p.steps.master === "you" || p.steps.master === "done" ? "master" : null);
+  const forYouKind = (p) => (p.error ? "error" : p.steps.plan === "you" ? "start" : p.steps.master === "you" || p.steps.master === "done" ? "master" : null);
   const openMaster = (p) => p.masterPrs.filter((r) => r.state === "open").length || p.masterPrs.length;
   const visiblePlans = () => S.plans.filter((p) => sel === "all" || sel === p.id);
   const ptag = (p) => '<span class="ptag" style="--pc:' + colorOf(p) + '">' + esc(p.id) + "</span>";
@@ -108,16 +107,7 @@
       if (text !== lastText) { lastText = text; S = JSON.parse(text); render(); } else if (was) render();
       if (!restored) { restored = true; restoreHash(); }
     } catch (e) { if (!offline) { offline = true; if (S) render(); else showFirstError(); } }
-    await pollEvents(); await pollBanner(); await pollWatchdog();
-  }
-  // The host's watchdog table (GET {base}/watchdog), every 10 s: the sidebar button, the pill, and the open table.
-  let WD = [], wdAt = 0;
-  async function pollWatchdog(force) {
-    return; // the watchdog is gone from the page (ADR-0017)
-    if (!force && Date.now() - wdAt < 10_000) return;
-    wdAt = Date.now();
-    try { const r = await fetch(BASE + "/watchdog", { cache: "no-store" }); if (!r.ok) return; WD = await r.json(); } catch (e) { return; }
-    renderWdBtn(); if ($("#wdDlg").open) $("#wdBody").innerHTML = wdTable(WD);
+    await pollEvents(); await pollBanner();
   }
   // events of the open drawer's plan only; redraws the drawer when they change
   async function pollEvents() {
@@ -167,32 +157,6 @@
     if (rb) rb.onclick = async () => { rb.disabled = true; rb.textContent = "Resuming…"; try { await window.prflowHost.resume(); } catch (e) { toast("Could not resume."); } pauseSig = ""; pollBanner(); };
   }
 
-  // ---------- watchdog (a host feature: plan.watchdog and GET {base}/watchdog; both may be missing) ----------
-  const DOG = '<svg class="wd-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 4.4 3.4 8.3 8 9 4.6-.7 8-4.6 8-9V6l-8-3Z"/><path d="m9 12 2 2 4-4"/></svg>';
-  const istDay = (ms) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(ms);
-  const isToday = (ms) => !!ms && istDay(ms) === istDay(Date.now());
-  function wdLine(w) {
-    return ""; // no watchdog on the page (ADR-0017)
-    if (w.state === "working") return '<span class="wdpill work" title="' + esc(w.why) + '">' + DOG + "Watchdog · run " + w.runs + (w.maxRuns ? " of " + w.maxRuns : "") + "</span>";
-    if (w.state === "fixed") return '<span class="wdpill">' + DOG + "Fixed · waiting to restart</span>";
-    if (w.state === "needs") return '<span class="wdpill cap" title="' + esc(w.needs) + '">' + DOG + "Watchdog: " + (w.maxRuns && w.runs >= w.maxRuns ? w.runs + " of " + w.maxRuns + " runs used" : "needs you") + "</span>";
-    const bits = [isToday(w.lastFixAt) && w.fixes ? "Watchdog fixed " + plural(w.fixes, "stop") + " · " + clock(w.lastFixAt) : "", w.kept && isToday(w.kept.at) ? "Watchdog: kept mergeable after " + w.kept.after + " merged · " + clock(w.kept.at) : ""].filter(Boolean);
-    return bits.length ? '<span class="wdpill">' + DOG + esc(bits.join(" · ")) + "</span>" : "";
-  }
-  function wdBox(w, key) {
-    return ""; // no watchdog on the page (ADR-0017)
-    if (!w || (!w.steps?.length && !w.needs) || (w.state === "done" && (w.dismissedAt || !w.lastFixAt)) || (w.state === "needs" && w.dismissedAt)) return "";
-    const done = w.state === "done", cls = done || w.state === "fixed" ? "ok" : w.state === "needs" ? "cap" : "";
-    const title = done ? "Watchdog fixed it" : w.state === "fixed" ? "Watchdog fixed it · waiting to restart" : w.state === "needs" ? "Watchdog handed it to you" : "Watchdog";
-    const row = WD.find((r) => r.key === key && r.bug), bug = w.bug || row?.bug, fix = w.fix || (row?.fix !== "—" ? row?.fix : ""); // short lines; older runs only have them in the table
-    const lead = w.state === "needs" ? "<b>Needs you:</b> " + esc(w.needs) : w.cause ? '<span class="wd1" title="' + esc(w.cause) + '"><b>Cause:</b> ' + esc(bug || w.cause) + "</span>" + (w.summary ? '<span class="wd1" title="' + esc(w.summary) + '"><b>Fix:</b> ' + esc(fix || w.summary) + "</span>" : "") : esc(w.doing || "The watchdog (Opus, outside the sandbox) is reading the plan's events and the code to find out why.");
-    const span = w.startedAt ? clock(w.startedAt) : "";
-    const steps = (w.steps || []).filter((x, i) => !(i === 0 && x.text === w.why)).map((x) => (x.text === "Continue" ? { ...x, text: "Continue the plan" } : x));
-    return '<div class="wdbox ' + cls + '"><h3>' + DOG + title + '<span class="when">' + esc(span) + "</span>" + (done ? '<button class="x" data-a="wd-dismiss" data-id="' + esc(key) + '" title="Hide (the Watchdog table keeps it)">✕</button>' : "") + '</h3><p class="lead">' + lead + "</p>" +
-      (steps.length && !done ? "<ul>" + steps.map((x) => '<li class="' + esc(x.state) + '"><span class="d"></span><span>' + esc(x.text) + '</span><span class="t">' + (x.at ? esc(clock(x.at)) : "") + "</span></li>").join("") + "</ul>" : "") +
-      (w.files?.length ? '<div class="files">' + w.files.map((f) => "<div><span>" + esc(f.change) + "</span> " + esc(f.path) + "</div>").join("") + "</div>" : "") +
-      '<div class="guard">Can\'t push to master or main, merge, or write to the prod database or prod branches. Run ' + w.runs + (w.maxRuns ? " of " + w.maxRuns : "") + " today" + (done ? " · still watching this plan until its master PRs are merged" : "") + ".</div></div>";
-  }
   // The central findings list: every finding of every review, with its status (GET {base}/findings).
   let FD = [], fdView = { status: "open", plan: "all" };
   const FD_ORDER = ["harmful", "minor", "trivial", "open", "not fixed", "being fixed", "partly fixed", "sent to planner", "sent", "accepted", "fixed"];
@@ -208,30 +172,6 @@
     $("#fdBody").innerHTML = bar + (shown.length ? '<table class="fd-t"><thead><tr><th>Status</th><th>Where</th><th>Kind</th><th>Finding</th></tr></thead><tbody>' + rows + "</tbody></table>" + (shown.length > 600 ? '<p class="legend">Showing the first 600 of ' + shown.length + ". Pick a plan or a status to narrow it.</p>" : "") : '<p class="legend">Nothing here.</p>');
   }
   document.addEventListener("fdplan", (e) => { fdView.plan = e.detail; renderFindings(); });
-
-  function wdTable(rows) {
-    if (!rows.length) return '<p class="legend">The watchdog has not stepped in yet.</p>';
-    const cls = { Fixed: "ok", Fixing: "run", "Needs you": "bad" };
-    const when = (ms) => (isToday(ms) ? clock(ms) : new Date(ms).toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "Asia/Kolkata" }) + " " + clock(ms));
-    return '<table class="wdt"><thead><tr><th>When</th><th>Plan / ticket</th><th>Stuck at</th><th>Bug</th><th>Fix</th><th>Changed</th><th>Then</th><th>Status</th></tr></thead><tbody>' + rows.map((r) => '<tr><td class="w">' + esc(when(r.at)) + '</td><td class="id">' + esc(r.name) + "</td><td>" + esc(r.stuckAt) + "</td><td>" + esc(r.bug) + "</td><td>" + esc(r.fix) + "</td><td><code>" + esc(r.files || "—") + "</code></td><td>" + esc(r.then) + '</td><td class="' + (cls[r.status] || "") + '">' + esc(r.status) + "</td></tr>").join("") + "</tbody></table>";
-  }
-  // The global pill: fixing (a plan or a code fix), someone needs you, or how many plans it watches.
-  function wdPill(all) {
-    return ""; // no watchdog on the page (ADR-0017)
-    const act = all.find((p) => p.watchdog?.state === "working"), fixRow = WD.find((r) => r.kind === "fix" && r.status === "Fixing");
-    if (act || fixRow) return '<span class="wdpill work" title="The watchdog is fixing a stopped plan or code fix">' + DOG + "Watchdog: fixing " + esc(act ? act.id : fixRow.name) + "</span>";
-    const need = all.find((p) => p.watchdog?.state === "needs" && p.error);
-    if (need) return '<span class="wdpill cap" title="' + esc(need.watchdog.needs) + '">' + DOG + esc(need.id) + " needs you</span>";
-    const n = all.filter((p) => p.started && p.steps.master !== "done").length, kept = all.reduce((a, p) => a + (p.watchdog && isToday(p.watchdog.kept?.at) ? p.watchdog.keptCount || 0 : 0), 0);
-    return n ? '<span class="wdpill" title="Watches every started plan and ticket code fix until its master PRs are merged">' + DOG + "Watchdog: watching " + plural(n, "plan") + (kept ? " · kept " + kept + " mergeable" : "") + "</span>" : "";
-  }
-  function renderWdBtn() {
-    const b = $("#wdBtn"); if (!b) return;
-    const names = (st) => [...new Set(WD.filter((r) => r.status === st).map((r) => r.name))].join(", "); // amber fixing, red stuck, else green
-    const [cls, text] = names("Fixing") ? ["work", "Watchdog: fixing " + names("Fixing")] : names("Needs you") ? ["bad", "Watchdog: " + names("Needs you") + " stuck"] : ["", "Watchdog: all clear"];
-    b.className = "wdbtn" + (cls ? " " + cls : "");
-    b.innerHTML = DOG + esc(text);
-  }
 
   // ---------- derived views ----------
   function where(p) {
@@ -346,8 +286,8 @@
     const w = (p) => tasksOf(p).length || 1, total = all.reduce((a, p) => a + w(p), 0);
     const one = cur ? [cur] : all, v = cur ? pct(cur) : Math.round(S.progress?.all ?? (all.reduce((a, p) => a + pct(p) * w(p), 0) / total));
     const ks = one.flatMap(tasksOf), done = ks.filter((t) => t.status === "done").length;
-    const you = one.filter((p) => (forYouKind(p) && forYouKind(p) !== "master" || p.steps.master === "you") && !merging(p) && !wdOn(p)).length, label = cur ? cur.id : "All work";
-    return '<span class="pct">' + v + '%</span><div class="gbar" role="progressbar" aria-label="' + esc(label) + '" aria-valuenow="' + v + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + v + '%"></span></div><span class="gtxt"><b>' + esc(label) + "</b> · " + (cur ? "" : all.length + " pasted · ") + (you ? '<b class="you-n">' + (cur ? "waiting for you" : you + " waiting for you") + "</b> · " : "") + done + "/" + ks.length + " tasks done" + (offline ? ' · <span class="off">offline, retrying</span>' : "") + " " + wdPill(all) + "</span>";
+    const you = one.filter((p) => (forYouKind(p) && forYouKind(p) !== "master" || p.steps.master === "you") && !merging(p)).length, label = cur ? cur.id : "All work";
+    return '<span class="pct">' + v + '%</span><div class="gbar" role="progressbar" aria-label="' + esc(label) + '" aria-valuenow="' + v + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + v + '%"></span></div><span class="gtxt"><b>' + esc(label) + "</b> · " + (cur ? "" : all.length + " pasted · ") + (you ? '<b class="you-n">' + (cur ? "waiting for you" : you + " waiting for you") + "</b> · " : "") + done + "/" + ks.length + " tasks done" + (offline ? ' · <span class="off">offline, retrying</span>' : "") + " " + "</span>";
   }
   const isBusy = (p) => tasksOf(p).some((t) => t.status === "working" || t.status === "review") || Object.values(p.steps).includes("run");
   // The plans list in the sidebar (and the dropdown on narrow screens): grouped by what it needs, no per-plan colours.
@@ -355,8 +295,6 @@
   try { liveOpen = localStorage.getItem("prflow.liveOpen") === "1"; } catch (e) { /* no storage */ }
   function plistHtml(all) {
     const st = (p) => {
-      const w = p.watchdog;
-      if (wdOn(p)) return ["need", "dog", w.state === "fixed" ? "Watchdog: restarting" : "Watchdog fixing"];
       if (p.error) return p.askYou ? ["need", "you", "Needs you"] : ["need", "bad", w?.state === "needs" ? "Needs you" : "Stopped"];
       if (p.steps.master === "done") return ["live", "ok", p.liveVia ? "Live through " + p.liveVia : "Live on prod"];
       if (p.stagingOnly && p.steps.uat === "done") return ["live", "ok", "Done on staging"]; // staging only: no master PRs
@@ -405,8 +343,8 @@
   }
   function planbarHtml(p) {
     const s = p.steps, ks = tasksOf(p), done = ks.filter((t) => t.status === "done").length, k = kindOf(p);
-    const running = p.started && !p.error && !p.landedAt && s.master !== "you" && s.master !== "done";
-    const canRetry = (p.error || p.stopRequested || ks.some((t) => t.status === "failed")) && !wdOn(p);
+    const running = p.started && !p.error && !p.landedAt && s.master !== "you" && s.master !== "done" && !(p.stagingOnly && s.uat === "done");
+    const canRetry = (p.error || p.stopRequested || ks.some((t) => t.status === "failed"));
     const top = '<div class="pb-top"><div class="pb-l">' + ptag(p) + "<h1>" + esc(p.title) + "</h1>" + sizeTag(p) + '<span class="sub">pasted ' + esc(ist(p.pastedAt)) + " · " + (k === "port" ? "already on staging" : k === "promote" ? esc(p.promotes) + " → staging" : ks.length ? done + "/" + plural(ks.length, "task") + " done" : "sizing") + '</span></div><div class="pb-act">' +
       (false && canRetry ? btn("Retry", "sm", "retry", 'data-id="' + esc(p.id) + '" data-key="/plans/' + esc(p.id) + '/retry"') : "") +
       (running && !p.stopRequested ? btn("Stop", "sm bare", "stop", 'data-id="' + esc(p.id) + '" data-key="/plans/' + esc(p.id) + '/stop"') : p.stopRequested ? '<span class="sub">Stopping…</span>' : "") +
@@ -414,12 +352,11 @@
       btn("Progress", "sm", "plan", 'data-id="' + esc(p.id) + '" data-tab="progress"') + btn(k === "big" ? "Plan" : k === "list" ? "List" : "Bug", "sm", "plan", 'data-id="' + esc(p.id) + '" data-tab="plan"') + btn("PRs", "sm", "plan", 'data-id="' + esc(p.id) + '" data-tab="prs"') +
       (s.master === "you" && !merging(p) ? btn("Merge master PR" + (p.masterPrs.length > 1 ? "s" : ""), "sm gold", "plan", 'data-id="' + esc(p.id) + '" data-tab="prs"') : "") +
       (p.targetBranch ? '<span class="sub" title="Merge to master is off for this plan">Targets ' + esc(p.targetBranch) + ", not staging</span>" : "") + "</div></div>";
-    const track = '<div class="ptrack">' + trackOf(p).map(([n, st, sub]) => '<div class="pstep ' + esc(wdOn(p) && st === "fail" ? "dog" : st) + '"><div class="bar"></div><b>' + esc(n) + "</b><small>" + esc(sub) + "</small></div>").join("") + "</div>";
-    const now = '<div class="pnow ' + esc(wdOn(p) && p.watchdog.steps?.[2]?.state !== "wait" ? "dog" : p.tone) + " " + (s.plan === "you" ? "waiting-you" : "") + '"><i></i><span>' + esc(p.error && !(wdOn(p) && p.watchdog.steps?.[2]?.state !== "wait") ? "Stopped: " + p.error : s.plan === "run" && p.activity?.length ? "Planning · " + lastAct(p.activity) : p.now) + (p.nowAt ? ' <span class="at">· ' + esc(ist(p.nowAt)) + "</span>" : "") + "</span></div>";
+    const track = '<div class="ptrack">' + trackOf(p).map(([n, st, sub]) => '<div class="pstep ' + esc(st) + '"><div class="bar"></div><b>' + esc(n) + "</b><small>" + esc(sub) + "</small></div>").join("") + "</div>";
+    const now = '<div class="pnow ' + esc(p.tone) + " " + (s.plan === "you" ? "waiting-you" : "") + '"><i></i><span>' + esc(p.error ? "Stopped: " + p.error : s.plan === "run" && p.activity?.length ? "Planning · " + lastAct(p.activity) : p.now) + (p.nowAt ? ' <span class="at">· ' + esc(ist(p.nowAt)) + "</span>" : "") + "</span></div>";
     const ver = p.versions?.length ? p.versions[p.versions.length - 1].n : 1;
     const ch = p.changes?.length && p.needsStart && !changesHidden.has(p.id + "#" + ver) ? '<div class="changes"><b>What changed in version ' + ver + '<button class="x" data-a="changes-x" data-id="' + esc(p.id) + '" data-n="' + ver + '" title="Hide (shows again for the next version)">✕</button></b>' + p.changes.map((c) => "<span>" + esc(c) + "</span>").join("") + "</div>" : "";
-    const wl = wdLine(p.watchdog), wd = (wl ? '<div class="wdl">' + wl + "</div>" : "") + wdBox(p.watchdog, p.id);
-    return top + track + now + termBox(p) + wd + ch // minor findings live on the Findings page (sidebar), not here + (k === "big" && ks.length ? wavesHtml(p) : k === "list" && ks.length ? triageHtml(p) : "");
+    return top + track + now + termBox(p) + ch + (k === "big" && ks.length ? wavesHtml(p) : k === "list" && ks.length ? triageHtml(p) : "");
   }
   // Every minor finding the task rounds let through, kept so none is lost. The last review marks harmful ones; you decide every one.
   const openMinorsOf = (p) => (S.minors?.[p.id] || []).filter((m) => !m.decided && (!m.status || ["open", "harmful", "minor", "trivial"].includes(m.status))).sort((a, b) => lvlRank(a) - lvlRank(b));
@@ -507,15 +444,8 @@
   }
   function planCard(p) {
     const kind = forYouKind(p), pid = esc(p.id), n = p.masterPrs.length, live = p.steps.master === "done";
-    if (kind === "watchdog") {
-      const w = p.watchdog, starting = w.state === "working" && w.steps?.[2]?.state === "wait" && !!p.error, fixing = w.state === "working" && !starting;
-      const label = starting ? "Stopped" : fixing ? "Watchdog fixing" : "Watchdog fixed it";
-      const line = starting ? p.error : fixing ? w.doing || w.why || "Reading why it stopped" : (w.summary || "") + " · restarting when nothing is busy, then Retry";
-      return '<div class="card plan ' + (starting ? "stopcard" : "wdcard") + '" data-id="' + pid + '-wd" data-a="pick" data-id2="' + pid + '" tabindex="0"><div class="card-top">' + ptag(p) + '<span class="you ' + (starting ? "bad" : "dog") + '">' + label + '</span></div><div class="m">' + esc(p.title) + '</div><div class="s ' + (starting ? "s-fail" : "s-work") + '"><i></i><span>' + esc(line) + '</span></div><div class="wdl">' + (starting ? '<span class="wdpill work">' + DOG + "Watchdog is starting</span>" : wdLine(w)) + '</div><div class="cbtn"><button class="sm" disabled>Edit plan</button><button class="sm" disabled title="The watchdog is on it">Retry</button></div></div>';
-    }
     if (kind === "error") {
-      const needs = p.watchdog?.state === "needs" ? p.watchdog : null, wl = wdLine(p.watchdog);
-      return '<div class="card plan err" data-id="' + pid + '-error" data-a="pick" data-id2="' + pid + '" tabindex="0"><div class="card-top">' + ptag(p) + '<span class="you ' + (p.askYou ? "" : "bad") + '">' + (needs || p.askYou ? "Needs you" : "Stopped") + '</span></div><div class="m">' + esc(p.title) + '</div><div class="errtxt">' + esc(needs ? needs.needs : p.error) + "</div>" + (wl ? '<div class="wdl">' + wl + "</div>" : "") + '<div class="cbtn">' +  "" + "</div></div>";
+      return '<div class="card plan err" data-id="' + pid + '-error" data-a="pick" data-id2="' + pid + '" tabindex="0"><div class="card-top">' + ptag(p) + '<span class="you ' + (p.askYou ? "" : "bad") + '">' + (p.askYou ? "Needs you" : "Stopped") + '</span></div><div class="m">' + esc(p.title) + '</div><div class="errtxt">' + esc(p.error) + "</div>" + '<div class="cbtn">' +  "" + "</div></div>";
     }
     if (kind === "start") {
       const ks = tasksOf(p), v = p.versions?.length || 1;
@@ -829,7 +759,7 @@
     const vs = p.versions || [], v = vs[vs.length - 1];
     const waits = ks.filter((t) => t.waitsOn?.length).map((t) => esc(t.label) + " waits for " + esc(t.waitsOn.map((x) => String(x).replace("/", " ")).join(", ")) + " (same files).");
     const body = {
-      progress: termBox(p) + wdBox(p.watchdog, p.id) + branchesBox(p) + progressTab(p),
+      progress: termBox(p) + branchesBox(p) + progressTab(p),
       plan: (port ? portBox : '<div class="blk">' + sizeBox + "</div>") + '<div class="blk"><h3>' + (port ? "Why these go to master" : "What you pasted") + (vs.length > 1 ? " · version " + v.n + " (edited " + esc(ist(v.at)) + ")" : "") + '</h3><div class="md">' + esc(p.text) + "</div>" +
         vs.slice(0, -1).reverse().map((x) => '<details class="oldv"><summary>Version ' + x.n + " · " + esc(ist(x.at)) + '</summary><div class="md" style="margin-top:6px">' + esc(x.text) + "</div></details>").join("") + "</div>" +
         (p.contract ? '<div class="blk"><h3>Frozen contract</h3><p class="legend" style="margin:0">Every task uses these fields as written. Only the lead run may change them, and it tells you.</p><div class="files" style="margin-top:8px">' + esc(p.contract) + "</div></div>" : "") +
@@ -841,7 +771,7 @@
       prs: '<div class="blk"><h3>Staging PR' + (p.stagingPrs.length > 1 ? "s" : "") + "</h3>" + (p.stagingPrs.length ? '<div class="prlist">' + p.stagingPrs.slice().sort((a, b) => a.order - b.order).map((r, i) => prRow(r, i, "staging")).join("") + "</div>" : '<p class="legend">Opens when ' + (big ? "all tasks are" : "the fix is") + " done.</p>") + "</div>" +
         '<div class="blk"><h3>Master PR' + (p.masterPrs.length > 1 ? "s: merge in this order" : "") + "</h3>" + (p.masterPrs.length ? '<div class="prlist">' + p.masterPrs.slice().sort((a, b) => a.order - b.order).map((r, i) => prRow(r, i, "master")).join("") + "</div>" : '<p class="legend">Opened after the UAT test passes. The same commits, cherry-picked onto master.</p>') + "</div>",
     }[dtab];
-    const badge = wdOn(p) ? ["dog", p.watchdog.state === "fixed" ? "Watchdog fixed it" : "Watchdog fixing"] : p.error ? ["bad", "Needs attention"] : s.master === "you" ? ["approve", "Your merge"] : s.master === "done" ? ["done", "Live"] : p.landedAt ? ["done", "In " + esc(p.targetBranch)] : s.plan === "you" ? ["approve", "Planned"] : ["diagnosing", "Running"];
+    const badge = p.error ? ["bad", "Needs attention"] : s.master === "you" ? ["approve", "Your merge"] : s.master === "done" ? ["done", "Live"] : p.landedAt ? ["done", "In " + esc(p.targetBranch)] : s.plan === "you" ? ["approve", "Planned"] : ["diagnosing", "Running"];
     const nrepo = Math.max(p.repos.length, 1);
     const meta = port ? plural(p.repos.reduce((a, r) => a + r.stagingCommits.length, 0), "commit") + " · " + plural(nrepo, "repo") : p.kind && ks.length ? (list ? (p.triage?.length || 0) + " bugs · " + plural(ks.length, "task") + " · " + plural(nrepo, "repo") : big ? plural(ks.length, "task") + " · " + plural(waveCount(p), "wave") + " · " + plural(nrepo, "repo") : "1 task · 1 repo") : "Sizing";
     const nm = openMaster(p);
@@ -919,9 +849,6 @@
     else if (a === "findings") { fdView.plan = sel && sel !== "all" && S.plans.some((x) => x.id === sel) ? sel : "all"; $("#fdDlg").showModal(); loadFindings(); } // opens on the plan you are looking at
     else if (a === "fd-close") $("#fdDlg").close();
     else if (a === "fd-filter") { fdView[el.dataset.k] = el.dataset.v; renderFindings(); }
-    else if (a === "watchdog") { $("#wdBody").innerHTML = wdTable(WD); $("#wdDlg").showModal(); pollWatchdog(true); }
-    else if (a === "wd-close") $("#wdDlg").close();
-    else if (a === "wd-dismiss") act("/watchdog/dismiss", { key: id });
   });
   document.addEventListener("toggle", (e) => { const g = e.target?.dataset?.g; if (g) { if (e.target.open) minorGroupsOpen.add(g); else minorGroupsOpen.delete(g); } }, true);
   document.addEventListener("keydown", (e) => {
