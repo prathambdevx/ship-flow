@@ -12,6 +12,8 @@ A web page shows the master and every subagent live, with each plan's waves, tas
 curl -fsSL https://raw.githubusercontent.com/prathambhatia/ship-flow/main/install.sh | bash
 ```
 
+Nothing else to set up: ship-flow sets itself up the first time you type `/ship` in a project (see "First time in a project").
+
 It needs [Claude Code](https://claude.com/claude-code), [Bun](https://bun.sh), git and jq. It clones ship-flow to `~/.ship-flow`, puts the `ship` command in `~/.local/bin`, and installs the Claude Code plugin. Run it again to update.
 
 ## Try the page
@@ -36,18 +38,15 @@ This opens the dashboard with made-up plans, so you can look around before you s
 
 Tell the master session in plain words, for example "T4 should also handle refunds" or "drop the retry button". It works out which tasks change, updates only those, and passes the change to the subagents working on them. Every other task keeps going. You never write a patch or run a command for this.
 
-## You need a backend
+## First time in a project
 
-ship-flow does the Claude part: planning, writing, reviewing, testing. The fixed steps (worktrees, merges, builds, staging deploys, PRs) belong to your project, so they live in a **backend**: a small local HTTP service. `BACKEND.md` lists the calls it answers. Point ship-flow at it in `~/.claude/ship/config.json`:
+ship-flow sets itself up the first time you type `/ship` in a project. It looks at your repos and branches, asks a few yes/no questions ("Is `staging` your staging branch?", "Is `main` production?", "Should I merge into staging myself, or wait for you?"), starts its own backend and gives you the dashboard link. Then it carries on with your plan. If a repo is not on GitHub, or the GitHub CLI is not logged in, it tells you how to fix that. You never run a setup command.
 
-```json
-{
-  "backends": { "myproject": { "url": "http://127.0.0.1:4323" } },
-  "projects": { "/Users/you/code/myproject": "myproject" }
-}
-```
+## The backend
 
-With one backend, every project uses it.
+ship-flow does the Claude part: planning, writing, reviewing, testing. The fixed steps (worktrees, merges, builds, staging deploys, PRs) belong to a **backend**: a small local HTTP service. The built-in backend (`ship serve`, started for you by `ship up`) is used by default. Its settings live in `~/.claude/ship/config.json`.
+
+If your project already has its own backend, or you want to write one, see `BACKEND.md` for the calls it answers and how to point ship-flow at it.
 
 ## What is inside
 

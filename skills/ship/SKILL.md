@@ -15,12 +15,12 @@ Rules that never change:
 
 ## 1. Register
 
-0. Run `ship backends`. If it lists no backend, stop and tell the user in plain words: ship-flow needs a backend (a small local service that makes worktrees, merges, deploys and opens PRs for their project); none is set up, so nothing can run yet. Point them to `BACKEND.md` in the plugin folder and offer `ship demo` to see the dashboard. Do not register.
+0. Run `ship backends`. If `forCwd` is `null`, this project has no backend yet: follow `setup.md` in this skill's folder (it looks at the repos, asks a few yes/no questions, writes the config and starts the built-in backend), then go on with step 1. Do not stop.
 
 1. Write the plan as JSON (format: `plan-format.md` in this skill's folder) to the scratchpad. Use the real repo names the backend knows. Keep tasks small enough to review: one repo each, explicit files, tests named in `checks`.
 2. Show the user the task list in a short table (label, repo, title, deps) and ask once: "Start P-?". Do not start without a yes.
 3. Run `ship register <plan.json>` (add `--staging-only` when the plan ends on staging). It prints the plan id and what is ready. Fix any validation error it prints and register again.
-4. Open the dashboard for the user: run `ship ui` with `run_in_background: true` (skip it if http://127.0.0.1:4390 already answers, or if the backend has its own page). Tell the user the link.
+4. Open the dashboard for the user. For a built-in backend (`"builtin": true` in `ship backends`) run `ship up`: it starts the backend if needed and prints the link. For another backend, run `ship ui` with `run_in_background: true` (skip it if http://127.0.0.1:4390 already answers, or if the backend has its own page). Tell the user the link.
 
 The user never runs `ship` themselves: every command in this skill is yours. When they ask to take over a plan another session started ("take over P-07"), run `ship attach P-07`, then start the loop below.
 

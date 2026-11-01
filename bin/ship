@@ -1,17 +1,18 @@
 #!/usr/bin/env bun
 // ship: the terminal's side of a /ship plan. It talks to the project's backend (the fixed steps: worktrees, merges, deploys,
 // tests, PRs) over HTTP; the backend is picked per project from ~/.claude/ship/config.json. It never pushes or merges itself.
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join, normalize, resolve } from "node:path";
 
 const HOME = join(homedir(), ".claude", "ship");
-const CONFIG = join(HOME, "config.json");
+const CONFIG = process.env.SHIP_CONFIG ?? join(HOME, "config.json"); // SHIP_CONFIG: another config file, for tests
 const argv = process.argv.slice(2), flag = (n: string) => { const i = argv.indexOf(n); if (i < 0) return undefined; const v = argv[i + 1]; argv.splice(i, 2); return v; };
-const backendFlag = flag("--backend");
+let backendFlag = flag("--backend");
 const [cmd, ...args] = argv;
 
-interface Backend { url: string; api?: string; tokenPage?: string; tokenHeader?: string; about?: string }
+interface Backend { builtin?: boolean; project?: any; url: string; api?: string; tokenPage?: string; tokenHeader?: string; about?: string }
 interface Config { backends: Record<string, Backend>; projects: Record<string, string> } // projects: folder prefix -> backend name
 const loadConfig = (): Config => { try { return JSON.parse(readFileSync(CONFIG, "utf8")); } catch { return { backends: {}, projects: {} }; } };
 // A plan remembers its backend (ship register writes it), so later commands from any folder reach the same one.
@@ -88,10 +89,87 @@ async function serveUi(port: number, demo = false): Promise<void> {
   await new Promise(() => {});
 }
 
+// ---- setup: find the repos and branches, write the built-in backend entry, start it ----
+const sh = (cmd: string[], cwd: string): string => { const r = Bun.spawnSync(cmd, { cwd, stdout: "pipe", stderr: "pipe" }); return r.exitCode === 0 ? r.stdout.toString().trim() : ""; };
+const isRepo = (d: string) => existsSync(join(d, ".git"));
+function guessCommands(d: string): { build?: string; test?: string } {
+  const has = (f: string) => existsSync(join(d, f));
+  if (has("package.json")) {
+    let scripts: Record<string, string> = {}; try { scripts = JSON.parse(readFileSync(join(d, "package.json"), "utf8")).scripts ?? {}; } catch {}
+    const pm = has("bun.lock") || has("bun.lockb") ? "bun run" : has("pnpm-lock.yaml") ? "pnpm run" : has("yarn.lock") ? "yarn" : "npm run";
+    return { build: scripts.build ? `${pm} build` : undefined, test: scripts.test ? (pm === "npm run" ? "npm test" : `${pm} test`) : undefined };
+  }
+  if (has("pom.xml")) return { build: "mvn -q -o verify" };
+  if (has("build.gradle") || has("build.gradle.kts")) return { build: "./gradlew build" };
+  if (has("go.mod")) return { test: "go test ./..." };
+  if (has("Cargo.toml")) return { test: "cargo test" };
+  if (has("pyproject.toml")) return { test: "pytest" };
+  if (has("Makefile")) return { test: "make test" };
+  return {};
+}
+function detectRepo(d: string) {
+  const origin = sh(["git", "remote", "get-url", "origin"], d), current = sh(["git", "branch", "--show-current"], d);
+  const refs = sh(["git", "for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes/origin"], d).split("\n").filter(Boolean);
+  const local = refs.filter((r) => r.startsWith("refs/heads/")).map((r) => r.slice(11)), remote = refs.filter((r) => r.startsWith("refs/remotes/origin/") && !r.endsWith("/HEAD")).map((r) => r.slice(20));
+  const have = new Set([...local, ...remote]), first = (names: string[]) => names.find((n) => have.has(n)) ?? null;
+  return { name: d.split("/").pop()!, path: d, origin: origin || null, originIsGithub: /github\.com[:/]/.test(origin), currentBranch: current || null, localBranches: local, remoteBranches: remote,
+    guess: { workBranch: current || null, stagingBranch: first(["staging", "uat", "stage", "develop-staging"]), prodBranch: first(["main", "master", "production", "prod"]), ...guessCommands(d) } };
+}
+function detect(folder: string) {
+  const root = resolve(folder), dirs = isRepo(root) ? [root] : readdirSync(root).sort().map((n) => join(root, n)).filter((p) => { try { return statSync(p).isDirectory() && isRepo(p); } catch { return false; } });
+  const gh = Bun.spawnSync(["gh", "auth", "status"], { stdout: "pipe", stderr: "pipe" }).exitCode === 0;
+  return { folder: root, repos: dirs.map(detectRepo), gh: { installed: !!Bun.which("gh"), loggedIn: gh } };
+}
+const portFree = (port: number) => new Promise<boolean>((ok) => { const s = createServer(); s.once("error", () => ok(false)); s.listen(port, "127.0.0.1", () => s.close(() => ok(true))); });
+function saveConfig(cfg: Config) { mkdirSync(dirname(CONFIG), { recursive: true }); writeFileSync(CONFIG, JSON.stringify(cfg, null, 2) + "\n"); }
+async function setup(file?: string) {
+  const a = readJson(file), cfg = loadConfig(), name: string = a.name ?? die("answers need a name"), folder = resolve(a.folder ?? die("answers need a folder"));
+  if (!/^[A-Za-z0-9._-]+$/.test(name)) die("name may only hold letters, digits, . _ -");
+  if (a.mergeToStaging !== "auto" && a.mergeToStaging !== "you") die('mergeToStaging must be "auto" or "you"');
+  if (!Array.isArray(a.repos) || !a.repos.length) die("answers need at least one repo");
+  const repos = a.repos.map((r: any) => ({ name: r.name ?? die("a repo needs a name"), path: resolve(r.path ?? die(`repo ${r.name} needs a path`)), workBranch: r.workBranch ?? die(`repo ${r.name} needs a workBranch`),
+    stagingBranch: r.stagingBranch ?? null, prodBranch: r.prodBranch ?? null, ...(r.build ? { build: r.build } : {}), ...(r.test ? { test: r.test } : {}) }));
+  const used = new Set(Object.entries(cfg.backends).filter(([n]) => n !== name).map(([, b]) => Number(new URL(b.url).port)));
+  let port = cfg.backends[name]?.builtin ? Number(new URL(cfg.backends[name]!.url).port) : 4400;
+  while (used.has(port) || (!(cfg.backends[name]?.builtin && port === Number(new URL(cfg.backends[name]!.url).port)) && !(await portFree(port)))) port++;
+  const project = { name, port, dataDir: join(HOME, "data", name), mergeToStaging: a.mergeToStaging, repos };
+  mkdirSync(project.dataDir, { recursive: true });
+  cfg.backends[name] = { url: `http://127.0.0.1:${port}`, builtin: true, project }; cfg.projects[folder] = name;
+  saveConfig(cfg);
+  out(`Backend ${name} is set up for ${folder}: http://127.0.0.1:${port}`);
+}
+const answers = async (url: string) => { try { await fetch(url, { signal: AbortSignal.timeout(1500) }); return true; } catch { return false; } };
+async function serveBuiltin(): Promise<void> {
+  if (!BK.b.builtin || !BK.b.project) return die(`backend ${BK.name} is not built in: it is a service you run yourself (${BK.b.url}). See BACKEND.md.`);
+  const file = join(dirname(realpathSync(process.argv[1]!)), "..", "engine", "serve.ts");
+  if (!existsSync(file)) die("the built-in backend (engine/serve.ts) is missing: update ship-flow");
+  out(`ship-flow dashboard: ${BK.b.url}/  (Ctrl+C to stop)`);
+  await (await import(file)).serve(BK.name, BK.b.project);
+}
+async function up() {
+  if (!BK.b.builtin) return out(BK.b.url + "/");
+  if (await answers(BK.b.url)) return out(`ship-flow dashboard: ${BK.b.url}/`);
+  const dir = BK.b.project?.dataDir ?? join(HOME, "data", BK.name); mkdirSync(dir, { recursive: true });
+  const log = openSync(join(dir, "serve.log"), "a");
+  Bun.spawn(["nohup", process.execPath, realpathSync(process.argv[1]!), "serve", "--backend", BK.name], { stdin: "ignore", stdout: log, stderr: log, env: process.env }).unref();
+  for (let i = 0; i < 20; i++) { await sleep(500); if (await answers(BK.b.url)) return out(`ship-flow dashboard: ${BK.b.url}/`); }
+  die(`the backend did not answer within 10 seconds. See ${join(dir, "serve.log")}`);
+}
+
 async function main() {
   if (cmd === "demo") return serveUi(Number(args[0] ?? 4390), true);
-  BK = pickBackend(cmd === "register" || cmd === "ui" ? undefined : args[0]);
+  if (cmd === "detect") return out(detect(args[0] ?? process.cwd()));
+  if (cmd === "setup") return setup(args[0]);
+  if (cmd === "backends") { // also says which backend this folder uses, so the skill can tell if setup is needed
+    const cfg = loadConfig(), cwd = resolve(process.cwd());
+    const forCwd = Object.entries(cfg.projects).filter(([dir]) => cwd === dir || cwd.startsWith(dir + "/")).sort((a, b) => b[0].length - a[0].length)[0]?.[1] ?? null;
+    return out({ ...cfg, forCwd, cwd });
+  }
+  if (cmd === "serve" && args[0]) backendFlag = args[0];
+  BK = pickBackend(["register", "ui", "up", "serve"].includes(cmd!) ? undefined : args[0]);
   switch (cmd) {
+    case "serve": return serveBuiltin();
+    case "up": return up();
     case "ui": return serveUi(Number(args[0] ?? 4390));
     case "register": {
       const plan = readJson(args[0]), sid = process.env.CLAUDE_CODE_SESSION_ID ?? die("CLAUDE_CODE_SESSION_ID is not set: run this from the Claude Code session that planned the work");
@@ -155,7 +233,6 @@ async function main() {
     case "uat-answer": return out(await call("POST", `/terminal/${need(args[0], "plan id")}/uat-answer`, readJson(args[1])));
     case "retry": return out(await call("POST", `/plans/${need(args[0], "plan id")}/retry`, {}));
     case "stop": return out(await call("POST", `/plans/${need(args[0], "plan id")}/stop`, {}));
-    case "backends": return out(loadConfig());
     default:
       out(`ship <command>   (backend: --backend <name>, else the project folder in ~/.claude/ship/config.json)
   register <plan.json> [--staging-only] [--text plan.md]   register and start a plan from this session
@@ -169,9 +246,13 @@ async function main() {
   uat-guide | query <db> <sql> | uat-run <P-xx> <plan.json> | uat-recheck <P-xx> <checks.json> [ms] | uat-answer <P-xx> <answer.json>
   sweep-answer <P-xx> <answer.json>  the last review's level for each minor finding
   port-done <P-xx> [--fail] [note]  a master conflict resolved (files staged, not committed), or --fail with why
+  detect [folder]                  read only: the git repos, branches and build commands found (JSON)
+  setup <answers.json>             write the built-in backend for a project (the master builds the file after asking you)
+  up                               start the built-in backend if it is not running; print the dashboard link
+  serve [name]                     run the built-in backend in the foreground
   ui [port]                        open the plans page for this backend (default port 4390)
   demo [port]                      the page with made-up plans, no backend needed
-  retry <P-xx> | stop <P-xx> | backends`);
+  retry <P-xx> | stop <P-xx> | backends  (env SHIP_CONFIG: another config file)`);
   }
 }
 await main();

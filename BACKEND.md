@@ -2,6 +2,8 @@
 
 The plugin is generic. Everything project-specific (how a repo gets a worktree, how code reaches staging, how it deploys, how it is tested, how a master PR is opened) lives in a **backend**: a local HTTP service the `ship` CLI calls. One reference backend exists (a private PR-workflow engine); this file is the contract any other backend implements.
 
+> The built-in backend (`ship serve`, started by `ship up`) is used by default: `/ship` sets it up in a new project and writes it to the config as `"builtin": true`. This file is for people who want to write their own backend instead.
+
 ## Pick a backend per project
 
 `~/.claude/ship/config.json`:
