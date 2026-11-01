@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script>try { document.documentElement.setAttribute("data-theme", localStorage.getItem("theme") === "dark" ? "dark" : "light"); document.documentElement.setAttribute("data-accent", localStorage.getItem("accent") || "teal"); } catch (e) { document.documentElement.setAttribute("data-theme", "light"); }</script>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="prflow-base" content="/api/prflow">
+<meta name="prflow-home" content="/">
+<meta name="td-token" content="">
+<link rel="icon" href="data:," type="image/svg+xml">
+<title>Tasks</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="accent.css">
+<link rel="stylesheet" href="theme.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app" id="app">
+  <aside class="side">
+    <div class="brand"><div class="brand-id"><svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><defs><mask id="logoNotch"><rect width="32" height="32" fill="#fff"/><circle cx="2.5" cy="16" r="3.2" fill="#000"/><circle cx="29.5" cy="16" r="3.2" fill="#000"/></mask></defs><rect x="2.5" y="7" width="27" height="18" rx="3.5" style="fill:var(--gold)" mask="url(#logoNotch)"/><path d="M21.5 9.5v13" style="stroke:var(--on-accent)" stroke-width="1.6" stroke-linecap="round" stroke-dasharray="1.6 2.2"/><path d="M8.2 16.2l2.9 2.9 5.4-6" fill="none" style="stroke:var(--on-accent)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><div><b>To-do</b><small>Plans and bugs into shipped code</small></div></div><button id="themeToggleBtn" title="Toggle dark / light mode" aria-label="Toggle dark or light mode">☀️</button></div>
+    <div class="modes" role="tablist"><button id="mBoard" role="tab" data-a="board" title="Back to the board">Board</button><button id="mTasks" role="tab" class="on" aria-selected="true">Tasks</button></div>
+    <nav class="nav" id="nav" aria-label="Columns" hidden></nav><!-- the column headers show the counts -->
+    <div class="plist" id="plist" aria-label="Plans"></div>
+    <div class="grow"></div>
+    <div class="side-foot">
+      <div class="accent-pick" hidden role="radiogroup" aria-label="Accent colour"><span>Accent</span>
+        <button data-a="teal" role="radio" title="Teal" style="background:#2A9D8F"></button><button data-a="violet" role="radio" title="Violet" style="background:#7C6CF0"></button><button data-a="coral" role="radio" title="Coral" style="background:#E07360"></button><button data-a="green" role="radio" title="Green" style="background:#4FA368"></button><button data-a="gold" role="radio" title="Gold" style="background:#B27D14"></button>
+      </div>
+      <button class="wdbtn" data-a="findings" title="Every finding from every review, with its status">Findings</button>
+      <span class="term-hint" title="Plan with Claude Code in a terminal, then run /ship there. This page shows that session and its subagents.">Plans start in a terminal: <code>/ship</code></span>
+    </div>
+  </aside>
+
+  <main class="tmain">
+    <div class="gprog" id="gprog"></div>
+    <div class="views" id="plans"></div>
+    <section class="planbar" id="planbar"></section>
+    <section class="kanban" id="kanban"></section>
+  </main>
+  <div class="scrim" id="scrim" data-a="close"></div>
+  <section class="detail" id="detail" aria-label="Details"></section>
+</div>
+
+<dialog id="fdDlg"><div class="hd"><h2>Findings</h2><small>Every finding from every review session, in every plan</small><button class="sm" data-a="fd-close">Close</button></div><div class="bd" id="fdBody"></div></dialog>
+<dialog id="wdDlg"><div class="hd"><h2>Watchdog</h2><small>What got stuck, what it fixed, how it carried on</small><button class="sm" data-a="wd-close">Close</button></div><div class="bd" id="wdBody"></div></dialog>
+<dialog id="planDlg">
+  <h2 id="dlgTitle">Paste a plan or a bug</h2>
+  <p class="lead" id="dlgLead"><b>This only plans it. Nothing runs until you press Start.</b> Claude splits it into tasks, runs what it can in parallel and leaves out bugs that are not real. Forgot something? Use Edit plan.</p>
+  <p class="lead" id="asIs" style="margin-top:-6px"><b>Paste it as it is.</b> Any file, any format, any length: a whole bugs.md, a spec, a Slack message. No need to clean it up first. You can also drop a .md file on the box.</p>
+  <textarea id="planTxt" aria-label="Plan or bug text"></textarea>
+  <p class="lead" id="editNote" style="display:none;margin:10px 0 0"></p>
+  <p class="dlg-err" id="dlgErr" role="alert" hidden></p>
+  <div class="row-end"><span class="kbd-hint">⌘ Enter</span><button class="bare" id="planNo">Cancel</button><button class="gold" id="planYes">Plan it</button></div>
+</dialog>
+
+<dialog id="askDlg" aria-labelledby="askTitle">
+  <h2 id="askTitle"></h2>
+  <div class="ask-body" id="askBody"></div>
+  <textarea id="askInput" hidden></textarea>
+  <label class="ask-ack" id="askAckRow" hidden><input type="checkbox" id="askAck"> <span id="askAckText"></span></label>
+  <div class="row-end"><button class="bare" id="askNo">Cancel</button><button class="gold" id="askYes"></button></div>
+</dialog>
+
+<div id="claudeBanner" role="status" hidden></div>
+<div class="toast" id="toast" popover="manual" role="alert"></div>
+
+<script src="motion.js"></script>
+<script src="kit.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+/* Default theme tokens. A host overrides any of them in theme.css. */
+:root {
+  --bg: #111110; --pane: #161615; --panel: #1a1a19; --raise: #222220; --line: #2c2c2a; --line-2: #3a3a37;
+  --ink: #f0f0ee; --ink-2: #b9b9b4; --dim: #8a8a85; --faint: #5e5e5a;
+  --gold: #B27D14; --gold-hi: #d8b25a; --gold-bg: #2a2113; --gold-line: #4a3c1e; --on-accent: #1a1405;
+  --ok: #5fb57a; --ok-bg: #16261b; --ok-line: #24452e;
+  --bad: #e0776c; --bad-bg: #2d1715; --bad-line: #6b2a24; --bad-ink: #f0a49b;
+  --blue: #7ea6e0; --blue-bg: #17202d;
+}
+:root[data-theme="light"] {
+  --bg: #f5f5f4; --pane: #fafaf9; --panel: #ffffff; --raise: #f0f0ee; --line: #e2e2e0; --line-2: #d4d4d0;
+  --ink: #151515; --ink-2: #3f3f3c; --dim: #6b6b6b; --faint: #9a9a96;
+  --gold: #B27D14; --gold-hi: #8a6410; --gold-bg: #fdf6e6; --gold-line: #e6d3a0; --on-accent: #ffffff;
+  --ok: #2e7d32; --ok-bg: #e8f3ea; --ok-line: #bfe0c8;
+  --bad: #c0392b; --bad-bg: #fbeceb; --bad-line: #efc2bd; --bad-ink: #a3342a;
+  --blue: #2f6fd6; --blue-bg: #e8f0fc;
+}
+:root[data-accent="teal"]   { --gold: #2A9D8F; --gold-hi: #5CC8BA; --gold-bg: #102a27; --gold-line: #1f4a44; --on-accent: #04201c; }
+:root[data-accent="violet"] { --gold: #7C6CF0; --gold-hi: #ABA1F8; --gold-bg: #1e1a36; --gold-line: #37305f; --on-accent: #0d0a26; }
+:root[data-accent="coral"]  { --gold: #E07360; --gold-hi: #F3A596; --gold-bg: #2f1716; --gold-line: #5a2b27; --on-accent: #2a0b06; }
+:root[data-accent="green"]  { --gold: #4FA368; --gold-hi: #8ACF9C; --gold-bg: #13261a; --gold-line: #25472f; --on-accent: #06200f; }
+:root[data-theme="light"][data-accent="teal"]   { --gold: #1f8a7d; --gold-hi: #146a61; --gold-bg: #e3f3f1; --gold-line: #b9dfda; --on-accent: #ffffff; }
+:root[data-theme="light"][data-accent="violet"] { --gold: #6a59e6; --gold-hi: #4a3bc2; --gold-bg: #efedfd; --gold-line: #d3cdfa; --on-accent: #ffffff; }
+:root[data-theme="light"][data-accent="coral"]  { --gold: #d0604c; --gold-hi: #a8432e; --gold-bg: #fcecea; --gold-line: #f3c8c0; --on-accent: #ffffff; }
+:root[data-theme="light"][data-accent="green"]  { --gold: #3f8f56; --gold-hi: #2c6e40; --gold-bg: #e6f3ea; --gold-line: #bfe0c8; --on-accent: #ffffff; }

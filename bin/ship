@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 // ship: the terminal's side of a /ship plan. It talks to the project's backend (the fixed steps: worktrees, merges, deploys,
 // tests, PRs) over HTTP; the backend is picked per project from ~/.claude/ship/config.json. It never pushes or merges itself.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, normalize, resolve } from "node:path";
 
 const HOME = join(homedir(), ".claude", "ship");
 const CONFIG = join(HOME, "config.json");
@@ -21,6 +21,7 @@ function pickBackend(planId?: string): { name: string; b: Backend } {
   let name = backendFlag ?? process.env.SHIP_BACKEND;
   if (!name && planId && existsSync(planFile(planId))) name = JSON.parse(readFileSync(planFile(planId), "utf8")).backend;
   if (!name) { const cwd = resolve(process.cwd()); name = Object.entries(cfg.projects).filter(([dir]) => cwd === dir || cwd.startsWith(dir + "/")).sort((a, b) => b[0].length - a[0].length)[0]?.[1]; }
+  if (!name && Object.keys(cfg.backends).length === 1) name = Object.keys(cfg.backends)[0]; // one backend: it is the default
   if (!name) die(`no backend for ${process.cwd()}: add the folder under "projects" in ${CONFIG}, or pass --backend <name>`);
   const b = cfg.backends[name!] ?? die(`backend "${name}" is not in ${CONFIG}`);
   return { name: name!, b: b as Backend };
@@ -58,9 +59,40 @@ const need = (v: string | undefined, what: string) => v ?? die(`missing ${what}`
 
 function seenFile(id: string) { mkdirSync(join(HOME, "seen"), { recursive: true }); return join(HOME, "seen", `${BK.name}-${id}.json`); }
 
+// The plugin's own page (ui/), served on this Mac with the backend's API behind /api/prflow.
+// demo: made-up plans from ui/demo/, no backend needed (the README screenshot).
+async function serveUi(port: number, demo = false): Promise<void> {
+  const UI = join(dirname(realpathSync(process.argv[1]!)), "..", "ui"), api = BK?.b.api ?? "/api/prflow";
+  Bun.serve({ hostname: "127.0.0.1", port, async fetch(req) {
+    const u = new URL(req.url);
+    if (demo && u.pathname.startsWith("/api/prflow")) {
+      const rest = u.pathname.slice("/api/prflow".length);
+      if (req.method !== "GET") return Response.json({ ok: false, error: "This is the demo: nothing changes." }, { status: 400 });
+      if (rest === "/state" || rest === "/findings") return new Response(Bun.file(join(UI, "demo", `${rest.slice(1)}.json`)), { headers: { "content-type": "application/json" } });
+      return Response.json(rest.endsWith("/events") ? [] : []);
+    }
+    if (u.pathname.startsWith("/api/prflow")) {
+      const headers: Record<string, string> = { "content-type": req.headers.get("content-type") ?? "application/json" };
+      if (req.method === "POST" && BK.b.tokenPage) headers[BK.b.tokenHeader ?? "x-td-token"] = await tok();
+      const r = await fetch(`${URL_()}${api}${u.pathname.slice("/api/prflow".length)}${u.search}`, { method: req.method, headers, body: req.method === "GET" ? undefined : await req.text() }).catch(() => null);
+      return r ? new Response(r.body, { status: r.status, headers: { "content-type": r.headers.get("content-type") ?? "application/json", "cache-control": "no-store" } }) : Response.json({ ok: false, error: `backend ${BK.name} is not answering` }, { status: 502 });
+    }
+    if (u.pathname === "/theme.css") return new Response("", { headers: { "content-type": "text/css" } }); // a host may override colours here
+    const f = normalize(join(UI, u.pathname === "/" ? "index.html" : u.pathname));
+    if (!f.startsWith(UI + "/") || !existsSync(f)) return new Response("not found", { status: 404 });
+    return new Response(Bun.file(f), { headers: { "cache-control": "no-store" } });
+  } });
+  const url = `http://127.0.0.1:${port}/` + (demo ? "#view=P-03" : "");
+  out(demo ? `ship-flow demo page: ${url}  (Ctrl+C to stop)` : `ship-flow page for backend ${BK.name}: ${url}  (Ctrl+C to stop)`);
+  if (!process.env.SHIP_NO_OPEN) Bun.spawn([process.platform === "darwin" ? "open" : "xdg-open", url], { stdout: "ignore", stderr: "ignore" });
+  await new Promise(() => {});
+}
+
 async function main() {
-  BK = pickBackend(cmd === "register" ? undefined : args[0]);
+  if (cmd === "demo") return serveUi(Number(args[0] ?? 4390), true);
+  BK = pickBackend(cmd === "register" || cmd === "ui" ? undefined : args[0]);
   switch (cmd) {
+    case "ui": return serveUi(Number(args[0] ?? 4390));
     case "register": {
       const plan = readJson(args[0]), sid = process.env.CLAUDE_CODE_SESSION_ID ?? die("CLAUDE_CODE_SESSION_ID is not set: run this from the Claude Code session that planned the work");
       const textFile = args.indexOf("--text"), text = textFile >= 0 ? readFileSync(need(args[textFile + 1], "--text file"), "utf8") : undefined;
@@ -137,6 +169,8 @@ async function main() {
   uat-guide | query <db> <sql> | uat-run <P-xx> <plan.json> | uat-recheck <P-xx> <checks.json> [ms] | uat-answer <P-xx> <answer.json>
   sweep-answer <P-xx> <answer.json>  the last review's level for each minor finding
   port-done <P-xx> [--fail] [note]  a master conflict resolved (files staged, not committed), or --fail with why
+  ui [port]                        open the plans page for this backend (default port 4390)
+  demo [port]                      the page with made-up plans, no backend needed
   retry <P-xx> | stop <P-xx> | backends`);
   }
 }
