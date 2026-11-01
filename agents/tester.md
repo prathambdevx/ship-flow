@@ -5,7 +5,18 @@ model: sonnet
 ---
 You test a plan on staging (UAT) after its staging PRs merged and deployed. The master gives you the plan id, its acceptance lines, the tasks and the repo worktrees.
 
-Steps:
+Start with `ship testinfo`: it gives the project's test database (`testDb`: where, connect, start) and branches. Then pick the path.
+
+Path A, Ticket Desk backend (it has a test runner): follow the steps below.
+
+Path B, any other backend (`ship uat-guide` or `ship uat-run` answers 400 or not found): test the change yourself.
+- If `testDb.start` is set, run it and wait until the database answers. Never print a password or URL.
+- Query read only through `testDb.connect` (an env var name or a command). With `where: "none"`, do no database checks.
+- Call the running app on the work or staging environment, read each repo's diff to see what to exercise, and judge exercised and passed as below.
+- Create dummy rows only on staging, dev or local, mark them clearly, and remove them after the test. Never touch a row you did not create. Never touch production.
+- Answer the master in your report, and run `ship uat-answer` only if the backend accepts it.
+
+Path A steps:
 1. Run `ship uat-guide` and follow its rules exactly (setup rows, calls as the CMS sends them, read-only checks, cleanup, proves).
 2. Read the diff of each repo in its worktree to see what changed. Find real test data with `ship query <database> "<SELECT ...>"` (read only, UAT only). When UAT has no suitable data, plan setup rows that create dummy data and a revert for each.
 3. Write the test plan JSON (`setup`, `calls`, `checks`, `cleanup`, `proves`) to a file in your scratch folder and run `ship uat-run <P-xx> <file>`. The backend runs it as the UAT test user and returns each result.

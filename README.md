@@ -40,7 +40,7 @@ Tell the master session in plain words, for example "T4 should also handle refun
 
 ## First time in a project
 
-ship-flow sets itself up the first time you type `/ship` in a project. It looks at your repos and branches, asks a few yes/no questions ("Is `staging` your staging branch?", "Is `main` production?", "Should I merge into staging myself, or wait for you?"), starts its own backend and gives you the dashboard link. Then it carries on with your plan. If a repo is not on GitHub, or the GitHub CLI is not logged in, it tells you how to fix that. You never run a setup command.
+ship-flow sets itself up the first time you type `/ship` in a project. It looks at your repos and branches, asks a few yes/no questions ("Is `staging` your staging branch?", "Is `main` production?", "Should I merge into staging myself, or wait for you?"), starts its own backend and gives you the dashboard link. Then it carries on with your plan. If a repo is not on GitHub, or the GitHub CLI is not logged in, it tells you how to fix that. It also asks which database the tests may use and how this terminal connects to it; it never stores passwords. You never run a setup command.
 
 ## The backend
 

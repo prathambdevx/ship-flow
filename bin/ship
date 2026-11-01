@@ -132,7 +132,12 @@ async function setup(file?: string) {
   const used = new Set(Object.entries(cfg.backends).filter(([n]) => n !== name).map(([, b]) => Number(new URL(b.url).port)));
   let port = cfg.backends[name]?.builtin ? Number(new URL(cfg.backends[name]!.url).port) : 4400;
   while (used.has(port) || (!(cfg.backends[name]?.builtin && port === Number(new URL(cfg.backends[name]!.url).port)) && !(await portFree(port)))) port++;
-  const project = { name, port, dataDir: join(HOME, "data", name), mergeToStaging: a.mergeToStaging, repos };
+  const td = a.testDb, wheres = ["staging", "dev", "local", "none"];
+  if (td && !wheres.includes(td.where)) die('testDb.where must be staging, dev, local or none');
+  // Only an env var name or a command is stored, never a URL or password.
+  if (td?.connect && /\w+:\/\/[^\s/:@]+:[^\s@]+@/.test(td.connect)) die("testDb.connect looks like a URL with a password: give an env var name or a command");
+  const testDb = td ? { where: td.where, ...(td.connect ? { connect: td.connect } : {}), ...(td.start ? { start: td.start } : {}), ...(td.note ? { note: td.note } : {}) } : undefined;
+  const project = { name, port, dataDir: join(HOME, "data", name), mergeToStaging: a.mergeToStaging, repos, ...(testDb ? { testDb } : {}) };
   mkdirSync(project.dataDir, { recursive: true });
   cfg.backends[name] = { url: `http://127.0.0.1:${port}`, builtin: true, project }; cfg.projects[folder] = name;
   saveConfig(cfg);
@@ -160,6 +165,10 @@ async function main() {
   if (cmd === "demo") return serveUi(Number(args[0] ?? 4390), true);
   if (cmd === "detect") return out(detect(args[0] ?? process.cwd()));
   if (cmd === "setup") return setup(args[0]);
+  if (cmd === "testinfo") { // for the tester: where test data may live and the branches
+    const p = pickBackend().b.project;
+    return out(p ? { project: p.name, mergeToStaging: p.mergeToStaging, testDb: p.testDb ?? null, repos: p.repos.map((r: any) => ({ name: r.name, path: r.path, workBranch: r.workBranch, stagingBranch: r.stagingBranch, prodBranch: r.prodBranch, build: r.build, test: r.test })) } : { project: null, note: "this backend is not built in; no testDb is stored" });
+  }
   if (cmd === "backends") { // also says which backend this folder uses, so the skill can tell if setup is needed
     const cfg = loadConfig(), cwd = resolve(process.cwd());
     const forCwd = Object.entries(cfg.projects).filter(([dir]) => cwd === dir || cwd.startsWith(dir + "/")).sort((a, b) => b[0].length - a[0].length)[0]?.[1] ?? null;
@@ -248,6 +257,7 @@ async function main() {
   port-done <P-xx> [--fail] [note]  a master conflict resolved (files staged, not committed), or --fail with why
   detect [folder]                  read only: the git repos, branches and build commands found (JSON)
   setup <answers.json>             write the built-in backend for a project (the master builds the file after asking you)
+  testinfo                         the test database settings and branches of this project (for the tester)
   up                               start the built-in backend if it is not running; print the dashboard link
   serve [name]                     run the built-in backend in the foreground
   ui [port]                        open the plans page for this backend (default port 4390)
